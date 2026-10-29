@@ -10,6 +10,21 @@ build/
 dist/
 *.manifest
 
+# Secretos y credenciales
+.env
+.env.*
+!.env.example
+secrets.json
+credentials.*
+*.pem
+*.key
+*.pfx
+*.p12
+id_rsa*
+id_ed25519*
+*.kdbx
+*.log
+
 # Sistema
 .DS_Store
 Thumbs.db
