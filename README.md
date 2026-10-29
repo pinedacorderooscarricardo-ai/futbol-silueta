@@ -18,6 +18,13 @@ pip install -r requirements.txt
 
 ## Cómo ejecutar
 
+Si aún no tienes el proyecto:
+
+```bash
+git clone https://github.com/pinedacorderooscarricardo-ai/futbol-silueta.git
+cd futbol-silueta
+```
+
 Desde la carpeta del proyecto:
 
 ```bash
@@ -37,7 +44,8 @@ powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 No hace falta copiar la carpeta `imagenes/` junto al ejecutable: los
 fondos se empaquetan dentro. La primera apertura puede tardar unos
 segundos porque el formato de un solo archivo se descomprime en una
-carpeta temporal.
+carpeta temporal. El ejecutable no se incluye en el repositorio: se
+genera localmente en `dist/` con el script anterior.
 
 ## Controles
 
@@ -113,12 +121,10 @@ configuración y ayuda.
 ## Estructura del proyecto
 
 ```text
-proyecto0000000000.1/
+futbol-silueta/
 ├── main.py                     # Punto de entrada
 ├── build_exe.ps1               # Empaquetado con PyInstaller
 ├── FutbolSilueta.spec          # Configuración generada por PyInstaller
-├── dist/
-│   └── FutbolSilueta.exe       # Ejecutable listo para usar
 ├── requirements.txt
 ├── README.md
 ├── imagenes/
