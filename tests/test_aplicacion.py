@@ -105,6 +105,39 @@ class AplicacionTests(unittest.TestCase):
 
         self.assertFalse(self.app.ejecutando)
 
+    def test_dibujar_el_partido_muestra_el_escudo_del_nivel(self) -> None:
+        juego = self.app.juego
+        juego.estado = Estado.JUGANDO
+        juego.jugador_controlado = juego.jugadores[0]
+
+        self.app.vista.dibujar(juego)
+
+        # El marcador incorporó la imagen del escudo del nivel actual.
+        self.assertIn(juego.nivel, self.app.vista._escudos_rivales)
+        escudo_rival = self.app.vista._escudos_rivales[juego.nivel]
+        self.assertEqual(escudo_rival.get_height(), 34)
+
+        # Y el panel es más ancho que el texto del resultado a secas.
+        marcador = self.app.vista._crear_superficie_marcador(juego)
+        texto = self.app.vista.fuente_marcador.render(
+            f"NIVEL {juego.nivel}   ROJO 0 - 0 AZUL",
+            True,
+            (255, 255, 255),
+        )
+        self.assertGreater(marcador.get_width(), texto.get_width())
+
+    def test_cada_nivel_cambia_el_escudo_del_marcador(self) -> None:
+        juego = self.app.juego
+        juego.estado = Estado.JUGANDO
+        juego.jugador_controlado = juego.jugadores[0]
+
+        for nivel in range(1, 12):
+            juego.nivel = nivel
+            self.app.vista._dibujar_marcador(juego)
+            self.assertIn(nivel, self.app.vista._escudos_rivales)
+
+        self.assertEqual(len(self.app.vista._escudos_rivales), 11)
+
 
 if __name__ == "__main__":
     unittest.main()

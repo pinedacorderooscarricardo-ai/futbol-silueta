@@ -81,9 +81,9 @@ class Aplicacion:
         self.juego.sonidos.habilitado = self.menus.sonido_activado
         accion = self.menus.consumir_accion()
 
-        if accion is Accion.JUGAR:
-            self.juego.nueva_partida()
-        elif accion is Accion.REINICIAR:
+        if accion in (Accion.JUGAR, Accion.REINICIAR):
+            color, color_borde, forma = self.menus.escudo_seleccionado
+            self.juego.personalizar_escudo(color, color_borde, forma)
             self.juego.nueva_partida()
         elif accion is Accion.SALIR:
             self.ejecutando = False

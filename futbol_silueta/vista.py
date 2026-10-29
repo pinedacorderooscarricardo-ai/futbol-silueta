@@ -37,6 +37,9 @@ from .configuracion import (
     Color,
 )
 
+from .escudos import Escudo, cargar_escudo
+from .niveles import nivel_por_numero
+
 if TYPE_CHECKING:
     from .juego import Juego
 
@@ -48,11 +51,12 @@ class Vista:
     mensajes de gol) y guarda en caché lo que cambia poco (marcador).
     """
 
-    POSICION_MARCADOR = (ANCHO // 2, 25)
+    POSICION_MARCADOR = (ANCHO // 2, 46)
     POSICION_TIEMPO = (20, 18)
     POSICION_ENERGIA = (20, 56)
     ANCHO_ENERGIA = 170
     ALTO_ENERGIA = 12
+    ALTO_ESCUDO_MARCADOR = 34
     POSICION_MENSAJE_GOL = (ANCHO // 2, ALTO // 2)
     POSICION_CONTINUAR = (ANCHO // 2, ALTO // 2 + 50)
 
@@ -117,6 +121,8 @@ class Vista:
         self._tiempo_cache: tuple[
             tuple[int, int], pygame.Surface
         ] | None = None
+        # Caché de escudos rivales escalados, uno por nivel.
+        self._escudos_rivales: dict[int, pygame.Surface] = {}
 
     # --------------------------------------------------
     # Dibujo general
@@ -131,6 +137,7 @@ class Vista:
 
         juego.balon.dibujar(self.pantalla)
         self._dibujar_jugador_controlado(juego)
+        self._dibujar_escudo(juego)
 
         self._dibujar_marcador(juego)
         self._dibujar_tiempo(juego)
@@ -258,12 +265,19 @@ class Vista:
         return panel
 
     def _dibujar_marcador(self, juego: Juego) -> None:
-        clave = (juego.goles_local, juego.goles_visitante)
+        clave = (
+            juego.nivel,
+            juego.goles_local,
+            juego.goles_visitante,
+            juego.escudo.color,
+            juego.escudo.color_borde,
+            juego.escudo.forma,
+        )
 
         if self._marcador_cache is None or self._marcador_cache[0] != clave:
             self._marcador_cache = (
                 clave,
-                self._crear_superficie_marcador(*clave),
+                self._crear_superficie_marcador(juego),
             )
 
         superficie = self._marcador_cache[1]
@@ -272,20 +286,84 @@ class Vista:
             superficie.get_rect(center=self.POSICION_MARCADOR),
         )
 
-    def _crear_superficie_marcador(
-        self,
-        goles_local: int,
-        goles_visitante: int,
-    ) -> pygame.Surface:
-        texto = f"ROJO {goles_local} - {goles_visitante} AZUL"
-        return self._crear_superficie_con_fondo(
-            texto,
-            self.fuente_marcador,
-            BLANCO,
-            padding_x=20,
-            padding_y=10,
-            radio=8,
+    def _crear_superficie_marcador(self, juego: Juego) -> pygame.Surface:
+        """Panel del marcador con el escudo del jugador y el del rival.
+
+        Cada nivel es un escudo rival distinto: la imagen del escudo del
+        nivel aparece a la derecha y el escudo personalizado del jugador
+        a la izquierda, junto al resultado y al nombre del club.
+        """
+        nivel = nivel_por_numero(juego.nivel)
+        texto = (
+            f"NIVEL {juego.nivel}   ROJO {juego.goles_local} - "
+            f"{juego.goles_visitante} AZUL"
         )
+        texto_render = self.fuente_marcador.render(texto, True, BLANCO)
+        subtitulo = self.fuente_hud.render(nivel.rival, True, BLANCO)
+
+        escudo_rival = self._escudo_rival_escalado(juego.nivel)
+        ancho_escudo_jugador = round(Escudo.TAMANO * 2 * 1.05)
+
+        separacion = 14
+        padding_x = 22
+        ancho = (
+            padding_x
+            + ancho_escudo_jugador
+            + separacion
+            + max(texto_render.get_width(), subtitulo.get_width())
+            + separacion
+            + escudo_rival.get_width()
+            + padding_x
+        )
+        alto = self.ALTO_ESCUDO_MARCADOR + subtitulo.get_height() + 18
+
+        panel = pygame.Surface((ancho, alto), pygame.SRCALPHA)
+        pygame.draw.rect(panel, NEGRO, panel.get_rect(), border_radius=8)
+
+        centro_y = panel.get_rect().centery
+        x_escudo_jugador = padding_x + ancho_escudo_jugador // 2
+        juego.escudo.dibujar(panel, (x_escudo_jugador, centro_y), 1.05)
+        panel.blit(
+            escudo_rival,
+            escudo_rival.get_rect(
+                midright=(ancho - padding_x, centro_y),
+            ),
+        )
+
+        centro_texto = padding_x + ancho_escudo_jugador + separacion
+        ancho_texto = ancho - 2 * (
+            padding_x + ancho_escudo_jugador + separacion
+        )
+        panel.blit(
+            texto_render,
+            texto_render.get_rect(
+                midtop=(centro_texto + ancho_texto // 2, 9),
+            ),
+        )
+        panel.blit(
+            subtitulo,
+            subtitulo.get_rect(
+                midtop=(centro_texto + ancho_texto // 2, 9 + texto_render.get_height() + 2),
+            ),
+        )
+
+        return panel.convert_alpha()
+
+    def _escudo_rival_escalado(self, nivel: int) -> pygame.Surface:
+        """Imagen del escudo del nivel, escalada para el marcador."""
+        escalado = self._escudos_rivales.get(nivel)
+
+        if escalado is None:
+            original = cargar_escudo(nivel)
+            alto = self.ALTO_ESCUDO_MARCADOR
+            ancho = round(original.get_width() * alto / original.get_height())
+            escalado = pygame.transform.smoothscale(
+                original,
+                (ancho, alto),
+            ).convert_alpha()
+            self._escudos_rivales[nivel] = escalado
+
+        return escalado
 
     def _dibujar_tiempo(self, juego: Juego) -> None:
         segundos = math.ceil(max(0.0, juego.tiempo_restante) / 1000.0)
@@ -399,6 +477,15 @@ class Vista:
 
         pygame.draw.polygon(self.pantalla, CIAN, puntos)
         pygame.draw.polygon(self.pantalla, BLANCO, puntos, 1)
+
+    def _dibujar_escudo(self, juego: Juego) -> None:
+        """Escudo personalizado del jugador controlado."""
+        control = juego.jugador_controlado
+
+        if control is None or juego.estado is not Estado.JUGANDO:
+            return
+
+        juego.escudo.dibujar(self.pantalla, control.rect.center)
 
     def _dibujar_objetivo_pase(self, juego: Juego) -> None:
         """Aro cian sobre el compañero al que iría el próximo pase."""

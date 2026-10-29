@@ -23,11 +23,13 @@ from futbol_silueta.configuracion import (
     CAMPO_RECT,
     PORTERIA_CENTRO,
     PRESORES_POR_EQUIPO,
+    VELOCIDAD_IA,
     Equipo,
     Estado,
     Rol,
 )
 from futbol_silueta.juego import Juego
+from futbol_silueta.niveles import parametros_de_nivel
 from futbol_silueta.vista import Vista
 
 
@@ -177,6 +179,43 @@ class JuegoTests(unittest.TestCase):
             self.vista.dibujar(self.juego)
 
         self.assertIsInstance(self.juego.estado, Estado)
+
+    def test_avanza_al_siguiente_nivel_tras_el_final(self) -> None:
+        self.juego.estado = Estado.FINAL
+        self.juego._al_pulsar_espacio()
+
+        self.assertEqual(self.juego.nivel, 2)
+        self.assertIs(self.juego.estado, Estado.JUGANDO)
+        self.assertEqual(
+            (self.juego.goles_local, self.juego.goles_visitante),
+            (0, 0),
+        )
+
+    def test_nueva_partida_reinicia_el_nivel(self) -> None:
+        self.juego.nivel = 3
+        self.juego.nueva_partida()
+
+        self.assertEqual(self.juego.nivel, 1)
+        self.assertEqual(self.juego.escudo.nivel, 1)
+
+    def test_el_nivel_siguiente_sustituye_el_escudo_y_los_ajustes(
+        self,
+    ) -> None:
+        self.juego.nivel = 2
+        self.juego._reiniciar_nivel(2)
+
+        self.assertEqual(self.juego.nivel, 2)
+        self.assertEqual(self.juego.escudo.nivel, 2)
+        self.assertEqual(
+            self.juego.nivel_actual.parametros,
+            parametros_de_nivel(2),
+        )
+
+    def test_personalizar_el_escudo_cambia_colores(self) -> None:
+        self.juego.personalizar_escudo((10, 20, 30), (40, 50, 60))
+
+        self.assertEqual(self.juego.escudo.color, (10, 20, 30))
+        self.assertEqual(self.juego.escudo.color_borde, (40, 50, 60))
 
 
 if __name__ == "__main__":

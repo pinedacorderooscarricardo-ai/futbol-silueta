@@ -3,7 +3,34 @@
 Juego 2D de fútbol para dos equipos de 11 jugadores, hecho con **pygame**.
 Incluye IA para el equipo visitante, conducción de balón, pases, robos,
 sprint con energía, atajadas, marcaje, un partido de dos tiempos de
-3 minutos y menús ilustrados con botones clicables.
+3 minutos, menús ilustrados con botones clicables, una campaña de
+niveles y la personalización del escudo del jugador.
+
+## Campaña de niveles
+
+El juego se divide en niveles: cada nivel es un escudo rival distinto y
+cada uno aumenta la dificultad de la IA de forma progresiva (velocidad,
+presión, tiros y puntería). Al terminar el último nivel la campaña vuelve
+al nivel 1.
+
+| Nivel | Rival | Escudo |
+| --- | --- | --- |
+| 1 | Club Aurora | `imagenes/escudos/escudo_01.jpeg` |
+| 2 | Pasión Fútbol | `imagenes/escudos/escudo_02.jpeg` |
+| ... | ... | ... |
+| 11 | Campeón Eterno | `imagenes/escudos/escudo_11.jpeg` |
+
+## Escudo y personalización
+
+Cada escudo es un nivel diferente: el marcador del partido muestra a la
+izquierda el escudo del jugador, el resultado y el nombre del club rival,
+y a la derecha la imagen del escudo de ese nivel. El escudo del jugador
+crece de grosor según el nivel.
+
+Desde el menú de opciones se puede personalizar el escudo del jugador:
+se elige el color (verde, azul, rojo, amarillo, naranja o rosa), la forma
+(clásica, redonda o rombo) y una vista previa muestra en vivo el diseño
+elegido antes de volver al partido.
 
 ## Requisitos
 
@@ -131,18 +158,25 @@ futbol-silueta/
 │   ├── menu_principal.jpeg
 │   ├── menu_opciones.jpeg
 │   ├── menu_pausa.jpeg
-│   └── ayuda_controles.jpeg
+│   ├── ayuda_controles.jpeg
+│   └── escudos/
+│       ├── escudo_01.jpeg
+│       ├── escudo_02.jpeg
+│       └── ...
 ├── tests/
 │   ├── __init__.py
 │   ├── test_juego.py           # Pruebas de la simulación
 │   ├── test_menus.py           # Pruebas de menús y botones
-│   └── test_aplicacion.py      # Pruebas del bucle y las pantallas
+│   ├── test_aplicacion.py      # Pruebas del bucle y las pantallas
+│   └── test_escudos.py         # Pruebas de escudos y personalización
 └── futbol_silueta/
     ├── __init__.py
     ├── configuracion.py        # Constantes, colores, formación y textos
     ├── utilidades.py           # Funciones de ayuda (límites, goles, etc.)
     ├── audio.py                # Efectos de sonido sintetizados
     ├── entidades.py            # Jugador, Balón y creación de equipos
+    ├── escudos.py              # Escudos por nivel y personalización
+    ├── niveles.py              # Niveles de la campaña y dificultad
     ├── vista.py                # Todo el dibujo de la partida
     ├── menus.py                # Fondos, botones y pantallas de menú
     ├── aplicacion.py           # Bucle principal y cambios de pantalla
@@ -152,8 +186,8 @@ futbol-silueta/
 ## Pruebas
 
 La suite usa SDL en modo headless, así que no abre ventana ni necesita
-audio real. Incluye 25 pruebas de simulación, menús, botones, bucle
-principal y dibujo:
+audio real. Incluye 43 pruebas de simulación, menús, botones, bucle
+principal, escudos y dibujo:
 
 ```bash
 python -m unittest discover -s tests -t . -v
@@ -171,6 +205,19 @@ python tests/test_aplicacion.py
 
 - Se integraron las cuatro ilustraciones del juego como menú principal,
   configuración, pausa y ayuda.
+- Se añadieron las imágenes de los escudos, uno por nivel
+  (`imagenes/escudos/escudo_01.jpeg` a `escudo_11.jpeg`).
+- Se dividió el juego en una campaña de niveles: cada nivel es un escudo
+  rival distinto y aumenta la dificultad de la IA de forma progresiva.
+- Al finalizar un nivel se avanza al siguiente; la campaña vuelve al
+  nivel 1 tras el último.
+- Se añadió la pantalla de personalización de escudo con colores y
+  formas seleccionables para el jugador, con vista previa en vivo.
+- El marcador muestra el escudo del jugador, el resultado, el nombre del
+  rival y la imagen del escudo del nivel en curso.
+- Cada uno de los once niveles tiene su propio color de escudo.
+- Tras el último tiempo, el mensaje final invita a pasar al siguiente
+  nivel de la campaña.
 - El menú principal aparece al arrancar y sus botones inician la partida,
   abren las opciones, muestran la ayuda o cierran el juego.
 - `ESC` durante el partido abre el menú de pausa en lugar de salir.

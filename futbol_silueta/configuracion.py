@@ -199,7 +199,7 @@ TEXTO_AYUDA = (
 )
 TEXTO_CONTINUAR = "Pulsa ESPACIO para continuar"
 TEXTO_ENTRETIEMPO = "Pulsa ESPACIO para el segundo tiempo"
-TEXTO_FINAL = "Pulsa ESPACIO para la revancha"
+TEXTO_FINAL = "Pulsa ESPACIO para el siguiente nivel"
 MENSAJE_GOL: dict[Equipo, str] = {
     Equipo.LOCAL: "¡GOOOL DEL ROJO!",
     Equipo.VISITANTE: "GOL DEL AZUL...",

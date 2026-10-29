@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pygame
 
-from .configuracion import ALTO, ANCHO, BLANCO, Color
+from .configuracion import ALTO, ANCHO, BLANCO, NEGRO, Color
+from .escudos import ESCUDO_PRESETS, FORMAS_ESCUDO, Escudo, FormaEscudo
 
 
 def _directorio_imagenes() -> Path:
@@ -36,6 +37,7 @@ class Pantalla(StrEnum):
     AYUDA = "ayuda"
     PARTIDO = "partido"
     PAUSA = "pausa"
+    ESCUDO = "escudo"
 
 
 class Accion(StrEnum):
@@ -51,6 +53,8 @@ class Accion(StrEnum):
     SONIDO = "sonido"
     VOLVER = "volver"
     SALIR = "salir"
+    ESCUDO = "escudo"
+    FORMA_ESCUDO = "forma_escudo"
 
 
 class Boton:
@@ -61,10 +65,12 @@ class Boton:
         rect: pygame.Rect,
         etiqueta: str,
         accion: Accion,
+        valor: object = None,
     ) -> None:
         self.rect = pygame.Rect(rect)
         self.etiqueta = etiqueta
         self.accion = accion
+        self.valor = valor
 
 
 class FondoImagen:
@@ -189,7 +195,13 @@ class Menus:
                     "Volver",
                     Accion.VOLVER,
                 ),
+                Boton(
+                    pygame.Rect(260, 530, 480, 58),
+                    "Personalizar escudo",
+                    Accion.ESCUDO,
+                ),
             ],
+            Pantalla.ESCUDO: self._botones_de_escudo(),
             Pantalla.AYUDA: [
                 Boton(
                     pygame.Rect(380, 468, 240, 52),
@@ -221,6 +233,17 @@ class Menus:
         self._velo_suave.fill((2, 8, 18, 38))
         self._pies: dict[str, pygame.Surface] = {}
 
+        # Personalización del escudo del jugador.
+        self.escudo_color: Color = ESCUDO_PRESETS[0][1]
+        self.escudo_color_borde: Color = ESCUDO_PRESETS[0][2]
+        self.escudo_forma: FormaEscudo = FORMAS_ESCUDO[0]
+
+        self.rect_panel_escudo = pygame.Rect(150, 90, 700, 520)
+        self._panel_escudo = self._crear_panel(
+            self.rect_panel_escudo,
+            self.ACENTO_PANEL,
+        )
+
     # --------------------------------------------------
     # Construcción
     # --------------------------------------------------
@@ -235,6 +258,34 @@ class Menus:
         return [
             Boton(fondo.rect(rect), etiqueta, accion)
             for rect, etiqueta, accion in definiciones
+        ]
+
+    @staticmethod
+    def _botones_de_escudo() -> list[Boton]:
+        """Botones de personalización: colores, formas y volver."""
+        colores = [
+            Boton(
+                pygame.Rect(200, 245 + indice * 50, 300, 38),
+                f"Escudo {etiqueta}",
+                Accion.ESCUDO,
+                valor=indice,
+            )
+            for indice, (etiqueta, _color, _borde) in enumerate(
+                ESCUDO_PRESETS
+            )
+        ]
+        formas = [
+            Boton(
+                pygame.Rect(550, 245 + indice * 50, 300, 38),
+                f"Forma {forma}",
+                Accion.FORMA_ESCUDO,
+                valor=indice,
+            )
+            for indice, forma in enumerate(FORMAS_ESCUDO)
+        ]
+
+        return colores + formas + [
+            Boton(pygame.Rect(260, 535, 480, 44), "Volver", Accion.VOLVER),
         ]
 
     @staticmethod
@@ -284,6 +335,11 @@ class Menus:
 
         self.indice %= len(botones)
         return botones[self.indice]
+
+    @property
+    def escudo_seleccionado(self) -> tuple[Color, Color, FormaEscudo]:
+        """Personalización actual del escudo del jugador."""
+        return (self.escudo_color, self.escudo_color_borde, self.escudo_forma)
 
     def consumir_accion(self) -> Accion | None:
         """Devuelve y borra la acción que debe ejecutar la aplicación."""
@@ -362,7 +418,7 @@ class Menus:
         boton = self.boton_actual
 
         if boton is not None:
-            self._ejecutar(boton.accion)
+            self._ejecutar(boton.accion, boton)
 
     def _atras(self) -> None:
         """Acción de ESC según la pantalla actual."""
@@ -370,10 +426,33 @@ class Menus:
             self._accion_pendiente = Accion.SALIR
         elif self.pantalla is Pantalla.PAUSA:
             self._cambiar_pantalla(Pantalla.PARTIDO)
-        elif self.pantalla in (Pantalla.OPCIONES, Pantalla.AYUDA):
+        elif self.pantalla in (
+            Pantalla.OPCIONES,
+            Pantalla.AYUDA,
+            Pantalla.ESCUDO,
+        ):
             self._cambiar_pantalla(self._volver_a)
 
-    def _ejecutar(self, accion: Accion) -> None:
+    def _ejecutar(self, accion: Accion, boton: Boton | None = None) -> None:
+        if (
+            accion is Accion.ESCUDO
+            and boton is not None
+            and boton.valor is not None
+        ):
+            indice = int(boton.valor)
+            _etiqueta, color, color_borde = ESCUDO_PRESETS[indice]
+            self.escudo_color = color
+            self.escudo_color_borde = color_borde
+            return
+
+        if (
+            accion is Accion.FORMA_ESCUDO
+            and boton is not None
+            and boton.valor is not None
+        ):
+            self.escudo_forma = FORMAS_ESCUDO[int(boton.valor)]
+            return
+
         if accion is Accion.JUGAR:
             self._cambiar_pantalla(Pantalla.PARTIDO)
             self._accion_pendiente = Accion.JUGAR
@@ -401,6 +480,9 @@ class Menus:
             self._cambiar_pantalla(self._volver_a)
         elif accion is Accion.SALIR:
             self._accion_pendiente = Accion.SALIR
+        elif accion is Accion.ESCUDO:
+            self._volver_a = Pantalla.OPCIONES
+            self._cambiar_pantalla(Pantalla.ESCUDO)
 
     def _actualizar_etiqueta_sonido(self) -> None:
         estado = "ACTIVADO" if self.sonido_activado else "DESACTIVADO"
@@ -469,6 +551,14 @@ class Menus:
                 self.rect_panel_ayuda.topleft,
             )
             self._dibujar_ayuda(pantalla)
+        elif self.pantalla is Pantalla.ESCUDO:
+            self.fondo_opciones.dibujar(pantalla)
+            pantalla.blit(self._velo, (0, 0))
+            pantalla.blit(
+                self._panel_escudo,
+                self.rect_panel_escudo.topleft,
+            )
+            self._dibujar_escudo(pantalla)
 
     def _dibujar_botones_imagen(
         self,
@@ -580,6 +670,71 @@ class Menus:
             584,
             self.fuente_pequena,
             (150, 170, 190),
+        )
+
+    def _dibujar_escudo(self, pantalla: pygame.Surface) -> None:
+        """Dibuja el panel de personalización del escudo."""
+        self._centrar(
+            pantalla,
+            "PERSONALIZAR ESCUDO",
+            150,
+            self.fuente_titulo,
+            BLANCO,
+        )
+        self._centrar(
+            pantalla,
+            "Elige el color y la forma de tu escudo",
+            192,
+            self.fuente_texto,
+            self.TEXTO_SUAVE,
+        )
+        self._centrar_en(
+            pantalla,
+            "Color",
+            350,
+            222,
+            self.fuente_boton,
+            self.ACENTO_PANEL,
+        )
+        self._centrar_en(
+            pantalla,
+            "Forma",
+            700,
+            222,
+            self.fuente_boton,
+            self.ACENTO_PANEL,
+        )
+        self._dibujar_botones_panel(
+            pantalla,
+            Pantalla.ESCUDO,
+            self.ACENTO_PANEL,
+        )
+        self._dibujar_vista_previa(pantalla)
+        self._centrar(
+            pantalla,
+            "Flechas o W/S: elegir | ENTER: aceptar | ESC: volver",
+            598,
+            self.fuente_pequena,
+            (150, 170, 190),
+        )
+
+    def _dibujar_vista_previa(self, pantalla: pygame.Surface) -> None:
+        """Muestra el escudo con la personalización elegida."""
+        escudo = Escudo.crear_para_nivel(
+            1,
+            color=self.escudo_color,
+            color_borde=self.escudo_color_borde,
+            forma=self.escudo_forma,
+        )
+        escudo.dibujar(pantalla, (700, 455), escala=4.2)
+        vista = self._texto(
+            "Así se ve tu escudo",
+            self.fuente_pequena,
+            self.TEXTO_SUAVE,
+        )
+        pantalla.blit(
+            vista,
+            vista.get_rect(center=(700, 528)),
         )
 
     def _dibujar_ayuda(self, pantalla: pygame.Surface) -> None:
@@ -711,8 +866,44 @@ class Menus:
                 texto.get_rect(center=boton.rect.center),
             )
 
+            if pantalla_menu is Pantalla.ESCUDO:
+                self._marcar_seleccion_escudo(pantalla, boton)
+
             if boton.accion is Accion.SONIDO:
                 self._dibujar_interruptor(pantalla, boton.rect)
+
+    def _marcar_seleccion_escudo(
+        self,
+        pantalla: pygame.Surface,
+        boton: Boton,
+    ) -> None:
+        """Muestra la muestra de color y señala la opción elegida."""
+        if boton.accion is Accion.ESCUDO and isinstance(boton.valor, int):
+            _etiqueta, color, borde = ESCUDO_PRESETS[boton.valor]
+            centro = (boton.rect.left + 24, boton.rect.centery)
+            pygame.draw.circle(pantalla, color, centro, 9)
+            pygame.draw.circle(pantalla, borde, centro, 9, 2)
+
+            if color == self.escudo_color:
+                pygame.draw.rect(
+                    pantalla,
+                    BLANCO,
+                    boton.rect.inflate(8, 8),
+                    1,
+                    border_radius=12,
+                )
+        elif (
+            boton.accion is Accion.FORMA_ESCUDO
+            and isinstance(boton.valor, int)
+            and FORMAS_ESCUDO[boton.valor] is self.escudo_forma
+        ):
+            pygame.draw.rect(
+                pantalla,
+                BLANCO,
+                boton.rect.inflate(8, 8),
+                1,
+                border_radius=12,
+            )
 
     def _dibujar_interruptor(
         self,
@@ -744,6 +935,18 @@ class Menus:
             superficie,
             superficie.get_rect(center=(ANCHO // 2, y)),
         )
+
+    def _centrar_en(
+        self,
+        pantalla: pygame.Surface,
+        texto: str,
+        x: int,
+        y: int,
+        fuente: pygame.font.Font,
+        color: Color,
+    ) -> None:
+        superficie = self._texto(texto, fuente, color)
+        pantalla.blit(superficie, superficie.get_rect(center=(x, y)))
 
     def _izquierda(
         self,

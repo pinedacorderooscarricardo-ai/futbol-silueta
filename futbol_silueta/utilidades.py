@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pygame
 
 from .configuracion import (
@@ -11,6 +14,22 @@ from .configuracion import (
     RADIO_BALON,
     Equipo,
 )
+
+
+def _directorio_imagenes() -> Path:
+    """Ubica las imágenes en el código fuente y dentro del ejecutable."""
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", None)
+
+        if base is None:
+            base = Path(sys.executable).resolve().parent
+
+        return Path(base) / "imagenes"
+
+    return Path(__file__).resolve().parent.parent / "imagenes"
+
+
+DIRECTORIO_IMAGENES = _directorio_imagenes()
 
 
 def acotar(valor: float, minimo: float, maximo: float) -> float:

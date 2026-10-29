@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pygame
 
 from futbol_silueta.configuracion import ALTO, ANCHO
+from futbol_silueta.escudos import ESCUDO_PRESETS, FORMAS_ESCUDO
 from futbol_silueta.menus import Accion, Menus, Pantalla
 
 
@@ -169,6 +170,36 @@ class MenusTests(unittest.TestCase):
         self.menus.procesar_tecla(pygame.K_RETURN)
         self.assertFalse(self.menus.sonido_activado)
 
+    def test_opciones_abren_el_escudo_y_aplican_un_preset(self) -> None:
+        self.menus.procesar_tecla(pygame.K_DOWN)
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        self.assertIs(self.menus.pantalla, Pantalla.OPCIONES)
+
+        self.menus.procesar_tecla(pygame.K_DOWN)
+        self.menus.procesar_tecla(pygame.K_DOWN)
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        self.assertIs(self.menus.pantalla, Pantalla.ESCUDO)
+
+        self.menus.procesar_tecla(pygame.K_DOWN)
+        self.menus.procesar_tecla(pygame.K_RETURN)
+
+        color, color_borde, forma = self.menus.escudo_seleccionado
+        self.assertEqual(color, ESCUDO_PRESETS[1][1])
+        self.assertEqual(color_borde, ESCUDO_PRESETS[1][2])
+        self.assertEqual(forma, FORMAS_ESCUDO[0])
+
+        # La primera forma queda aplicada: 6 colores y 3 formas antes de
+        # Volver, así que hay que bajar cinco veces desde el segundo color.
+        for _ in range(5):
+            self.menus.procesar_tecla(pygame.K_DOWN)
+        self.menus.procesar_tecla(pygame.K_RETURN)
+
+        _color, _borde, forma = self.menus.escudo_seleccionado
+        self.assertEqual(forma, FORMAS_ESCUDO[0])
+
+        self.menus.procesar_tecla(pygame.K_ESCAPE)
+        self.assertIs(self.menus.pantalla, Pantalla.OPCIONES)
+
     def test_ayuda_muestra_los_controles_y_vuelve(self) -> None:
         self.menus.procesar_tecla(pygame.K_DOWN)
         self.menus.procesar_tecla(pygame.K_DOWN)
@@ -216,6 +247,7 @@ class MenusTests(unittest.TestCase):
         for pantalla in (
             Pantalla.PRINCIPAL,
             Pantalla.OPCIONES,
+            Pantalla.ESCUDO,
             Pantalla.AYUDA,
             Pantalla.PAUSA,
         ):

@@ -15,16 +15,13 @@ from .configuracion import (
     COOLDOWN_LIBERACION,
     COOLDOWN_ROBO,
     DESPLAZAMIENTO_MARCA,
-    DISTANCIA_DISPARO_IA,
     DURACION_GOL,
     DURACION_MITAD,
-    DURACION_POSESION_PORTERO,
     ENERGIA_MAXIMA,
     ENERGIA_MINIMA_SPRINT,
     EQUIPOS,
     ESTADOS_ESPERA,
     Estado,
-    FACTOR_APUNTADO_DISPARO,
     FACTOR_COLISION,
     FACTOR_POSESION,
     FACTORES_ATAQUE,
@@ -39,15 +36,11 @@ from .configuracion import (
     PORTERIA_CENTRO,
     PORTERIA_INFERIOR,
     PORTERIA_SUPERIOR,
-    PRESORES_POR_EQUIPO,
-    RADIO_ATAJADA,
     RADIO_BALON,
-    RADIO_MARCAJE,
     RECARGA_ENERGIA,
-    TIEMPO_MINIMO_POSESION_IA,
-    VELOCIDAD_IA,
     VELOCIDAD_MINIMA_ATAJADA,
     VELOCIDAD_SPRINT,
+    Color,
     Equipo,
     Rol,
 )
@@ -57,6 +50,8 @@ from .entidades import (
     crear_jugadores,
     elegir_delantero_controlado,
 )
+from .escudos import FormaEscudo, Escudo
+from .niveles import NIVEL_MAXIMO, Nivel, nivel_por_numero
 from .utilidades import acotar, acotar_al_campo, equipo_rival
 
 if TYPE_CHECKING:
@@ -85,12 +80,64 @@ class Juego:
         self.tiempo_gol = 0
         self.estado = Estado.JUGANDO
 
+        # Nivel de la campaña y escudo del jugador para ese nivel.
+        self.nivel = 1
+        self.escudo = Escudo.crear_para_nivel(self.nivel)
+
         self.mitad = 1
         self.tiempo_restante = float(DURACION_MITAD)
         self.energia_actual = float(ENERGIA_MAXIMA)
         self.sonidos = Sonidos()
 
         self.reiniciar_jugada(con_silbato=False)
+
+    # --------------------------------------------------
+    # Niveles
+    # --------------------------------------------------
+
+    @property
+    def nivel_actual(self) -> Nivel:
+        """Nivel con el que se está jugando ahora."""
+        return nivel_por_numero(self.nivel)
+
+    def _reiniciar_nivel(self, nivel: int, con_silbato: bool = True) -> None:
+        """Reinicia el partido para un nivel de la campaña."""
+        self.nivel = nivel
+        self.escudo = Escudo.crear_para_nivel(
+            self.nivel,
+            color=self.escudo.color,
+            color_borde=self.escudo.color_borde,
+            forma=self.escudo.forma,
+        )
+
+        self.goles_local = 0
+        self.goles_visitante = 0
+        self.ultimo_gol = None
+        self.mitad = 1
+        self.tiempo_restante = float(DURACION_MITAD)
+        self.energia_actual = float(ENERGIA_MAXIMA)
+        self.reiniciar_jugada(con_silbato=con_silbato)
+
+    def _reiniciar_partido(self, con_silbato: bool = True) -> None:
+        """Reinicia el marcador y el reloj para una revancha."""
+        self._reiniciar_nivel(1, con_silbato=con_silbato)
+
+    def _siguiente_nivel(self) -> None:
+        """Pasa al nivel siguiente de la campaña."""
+        siguiente = self.nivel + 1 if self.nivel < NIVEL_MAXIMO else 1
+        self._reiniciar_nivel(siguiente, con_silbato=True)
+
+    def personalizar_escudo(
+        self,
+        color: Color,
+        color_borde: Color,
+        forma: FormaEscudo | None = None,
+    ) -> None:
+        """Aplica la personalización elegida por el jugador."""
+        self.escudo.cambiar_colores(color, color_borde)
+
+        if forma is not None:
+            self.escudo.cambiar_forma(forma)
 
     # --------------------------------------------------
     # Inicio, reinicio y posesión
@@ -290,13 +337,15 @@ class Juego:
         ):
             return False
 
+        radio_atajada = self.nivel_actual.parametros.radio_atajada_rival
+
         for jugador in self.jugadores:
             if jugador.rol is not Rol.PORTERO:
                 continue
 
             if (
                 jugador.pos.distance_squared_to(self.balon.pos)
-                > RADIO_ATAJADA**2
+                > radio_atajada**2
             ):
                 continue
 
@@ -369,7 +418,11 @@ class Juego:
                 jugador in perseguidores,
                 marcajes.get(jugador),
             )
-            jugador.mover_hacia(objetivo, VELOCIDAD_IA, dt)
+            jugador.mover_hacia(
+                objetivo,
+                self.nivel_actual.parametros.velocidad_ia,
+                dt,
+            )
 
     def _elegir_perseguidores(
         self,
@@ -399,7 +452,9 @@ class Juego:
                     self.balon.pos
                 )
             )
-            perseguidores.update(candidatos[:PRESORES_POR_EQUIPO])
+            perseguidores.update(
+                candidatos[: self.nivel_actual.parametros.presores]
+            )
 
         return perseguidores
 
@@ -431,7 +486,7 @@ class Juego:
 
         disponibles = set(atacantes)
         asignaciones: dict[Jugador, Jugador] = {}
-        radio2 = RADIO_MARCAJE**2
+        radio2 = self.nivel_actual.parametros.radio_marcaje**2
 
         for defensor in sorted(
             defensas,
@@ -490,16 +545,18 @@ class Juego:
 
     def _accion_portador_ia(self, jugador: Jugador, dt: float) -> None:
         """Conduce hacia el arco o dispara si ya está en zona de tiro."""
+        parametros = self.nivel_actual.parametros
+
         if jugador.rol is Rol.PORTERO:
             # El portero IA no se va de dribling: aguanta y despeja.
             jugador.mover_hacia(
                 jugador.posicion_base,
-                VELOCIDAD_IA,
+                parametros.velocidad_ia,
                 dt,
             )
             if (
                 pygame.time.get_ticks() - self.tiempo_posesion
-                >= DURACION_POSESION_PORTERO
+                >= parametros.duracion_posesion_portero
             ):
                 self._despejar_portero(jugador)
             return
@@ -513,15 +570,15 @@ class Juego:
         )
 
         if (
-            distancia <= DISTANCIA_DISPARO_IA
-            and tiempo_con_balon >= TIEMPO_MINIMO_POSESION_IA
+            distancia <= parametros.distancia_disparo
+            and tiempo_con_balon >= parametros.tiempo_minimo_posesion
         ):
             self._disparar_ia(jugador)
             return
 
         jugador.mover_hacia(
             OBJETIVO_ATAQUE_IA,
-            VELOCIDAD_IA * FACTOR_POSESION,
+            parametros.velocidad_ia * FACTOR_POSESION,
             dt,
         )
 
@@ -558,7 +615,8 @@ class Juego:
         medio_arco = (
             PORTERIA_INFERIOR - PORTERIA_SUPERIOR
         ) / 2.0 - margen
-        y = PORTERIA_CENTRO + lado * medio_arco * FACTOR_APUNTADO_DISPARO
+        factor = self.nivel_actual.parametros.factor_apuntado
+        y = PORTERIA_CENTRO + lado * medio_arco * factor
         y = acotar(
             y,
             PORTERIA_SUPERIOR + margen,
@@ -785,16 +843,6 @@ class Juego:
         """Empieza una partida desde cero, conservando la misma ventana."""
         self._reiniciar_partido(con_silbato=con_silbato)
 
-    def _reiniciar_partido(self, con_silbato: bool = True) -> None:
-        """Reinicia el marcador y el reloj para una revancha."""
-        self.goles_local = 0
-        self.goles_visitante = 0
-        self.ultimo_gol = None
-        self.mitad = 1
-        self.tiempo_restante = float(DURACION_MITAD)
-        self.energia_actual = float(ENERGIA_MAXIMA)
-        self.reiniciar_jugada(con_silbato=con_silbato)
-
     def procesar_tecla(self, tecla: int) -> None:
         """Reacciona a una tecla pulsada durante el partido."""
         if tecla == pygame.K_SPACE:
@@ -809,6 +857,6 @@ class Juego:
         elif self.estado is Estado.ENTRETIEMPO:
             self._empezar_segunda_mitad()
         elif self.estado is Estado.FINAL:
-            self._reiniciar_partido()
+            self._siguiente_nivel()
         elif self.estado is Estado.JUGANDO:
             self._disparar_humano()
