@@ -61,10 +61,16 @@ class Jugador:
         )
         self.color = COLOR_EQUIPO[equipo]
         self.rect = pygame.Rect(0, 0, self.RADIO * 2, self.RADIO * 2)
+        # Rect del sprite completo (con margen), para blitear sin crear
+        # un rect nuevo en cada fotograma.
+        lado_sprite = (self.RADIO + self.MARGEN_SPRITE) * 2
+        self.rect_sprite = pygame.Rect(0, 0, lado_sprite, lado_sprite)
         self.actualizar_rect()
 
     def actualizar_rect(self) -> None:
-        self.rect.center = (round(self.pos.x), round(self.pos.y))
+        centro = (round(self.pos.x), round(self.pos.y))
+        self.rect.center = centro
+        self.rect_sprite.center = centro
 
     def mover(self, dx: float, dy: float) -> None:
         """Desplaza al jugador y lo mantiene dentro del campo."""
@@ -95,14 +101,16 @@ class Jugador:
         dt: float,
     ) -> None:
         """Se mueve hacia un objetivo sin sobrepasarlo."""
-        direccion = objetivo - self.pos
-        distancia = direccion.length()
+        dx = objetivo.x - self.pos.x
+        dy = objetivo.y - self.pos.y
+        distancia2 = dx * dx + dy * dy
 
-        if distancia <= 1.0:
+        if distancia2 <= 1.0:
             return
 
-        direccion.scale_to_length(min(velocidad * dt, distancia))
-        self.mover(direccion.x, direccion.y)
+        distancia = math.sqrt(distancia2)
+        factor = min(velocidad * dt, distancia) / distancia
+        self.mover(dx * factor, dy * factor)
 
     def velocidad_efectiva(self) -> float:
         """Velocidad real: se reduce mientras conduce el balón."""
@@ -112,7 +120,7 @@ class Jugador:
 
     def dibujar(self, superficie: pygame.Surface) -> None:
         sprite = self._obtener_sprite()
-        superficie.blit(sprite, sprite.get_rect(center=self.rect.center))
+        superficie.blit(sprite, self.rect_sprite)
 
     def _obtener_sprite(self) -> pygame.Surface:
         clave = (self.equipo, self.tiene_balon)
@@ -240,15 +248,20 @@ class Balon:
 
         Devuelve el equipo que anota si entra en una portería, o None.
         """
+        velocidad = self.vel.length()
         pasos = max(
             1,
-            math.ceil(self.vel.length() * dt / PASO_MAXIMO_BALON),
+            math.ceil(velocidad * dt / PASO_MAXIMO_BALON),
         )
         dt_paso = dt / pasos
+        # La fricción es la misma en todos los subpasos: se calcula
+        # una sola vez en lugar de una potencia por subpaso.
+        factor_friccion = FRICCION ** (dt_paso * FPS)
 
         for _ in range(pasos):
-            self.pos += self.vel * dt_paso
-            self.vel *= FRICCION ** (dt_paso * FPS)
+            self.pos.x += self.vel.x * dt_paso
+            self.pos.y += self.vel.y * dt_paso
+            self.vel *= factor_friccion
             self._detener_si_va_lento()
 
             gol = self._rebotar()

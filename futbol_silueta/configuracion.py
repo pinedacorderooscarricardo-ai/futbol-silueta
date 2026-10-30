@@ -18,6 +18,14 @@ import pygame
 ANCHO, ALTO = 1000, 650
 FPS = 60
 DT_MAXIMO = 0.05
+# Paso de simulación fijo: la física avanza siempre en incrementos
+# iguales, acumulando el tiempo real sobrante, de modo que el partido
+# se comporta igual en computadoras rápidas y lentas.
+DT_FIJO = 1.0 / FPS
+# Máximo de pasos de simulación por fotograma para ponerse al día. Si
+# aun así sobra tiempo atrasado, se descarta en vez de acumular retraso
+# (y que la simulación entre en espiral).
+MAX_PASOS_FISICA = 3
 TITULO_VENTANA = "Fútbol Silueta - 22 jugadores"
 
 Color = tuple[int, int, int]
@@ -153,6 +161,11 @@ FACTORES_ATAQUE: dict[Rol, tuple[float, float]] = {
 # Jugadores que presionan el balón por equipo cuando NO lo tienen.
 PRESORES_POR_EQUIPO = 2
 
+# Cada cuántos milisegundos la IA recalcula sus decisiones tácticas
+# (persecutores y marcajes). El movimiento de cada jugador sigue
+# actualizándose en todos los fotogramas.
+INTERVALO_DECISION_IA = 100
+
 # ============================================================
 # 9. Marcaje, colisiones y atajadas
 # ============================================================
@@ -195,7 +208,7 @@ VOLUMEN_DISPARO = 0.40
 
 TEXTO_AYUDA = (
     "WASD/Flechas: mover | SHIFT: sprintar | "
-    "ESPACIO: chutar | E: pasar | ESC: pausa"
+    "ESPACIO: chutar | E: pasar | ESC: pausa | F3: rendimiento"
 )
 TEXTO_CONTINUAR = "Pulsa ESPACIO para continuar"
 TEXTO_ENTRETIEMPO = "Pulsa ESPACIO para el segundo tiempo"

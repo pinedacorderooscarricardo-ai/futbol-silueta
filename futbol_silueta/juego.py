@@ -28,6 +28,7 @@ from .configuracion import (
     FUERZA_DESPEJE_PORTERO,
     FUERZA_PATEO,
     GASTO_SPRINT,
+    INTERVALO_DECISION_IA,
     ITERACIONES_COLISION,
     OBJETIVO_ATAQUE_IA,
     PASE_FUERZA_FACTOR,
@@ -52,7 +53,7 @@ from .entidades import (
 )
 from .escudos import FormaEscudo, Escudo
 from .niveles import NIVEL_MAXIMO, Nivel, nivel_por_numero
-from .utilidades import acotar, acotar_al_campo, equipo_rival
+from .utilidades import acotar, acotar_posicion, equipo_rival
 
 if TYPE_CHECKING:
     from .vista import Vista
@@ -88,6 +89,13 @@ class Juego:
         self.tiempo_restante = float(DURACION_MITAD)
         self.energia_actual = float(ENERGIA_MAXIMA)
         self.sonidos = Sonidos()
+
+        # Decisiones tácticas de la IA, recalculadas cada intervalo y al
+        # cambiar la posesión; el movimiento usa la última decisión.
+        self._tiempo_decision = 0
+        self._equipo_con_balon: Equipo | None = None
+        self._perseguidores: set[Jugador] = set()
+        self._marcajes: dict[Jugador, Jugador] = {}
 
         self.reiniciar_jugada(con_silbato=False)
 
@@ -152,18 +160,52 @@ class Juego:
         self.jugadores = crear_jugadores()
         self.jugador_controlado = elegir_delantero_controlado(self.jugadores)
 
+        # Los porteros se usan en cada subpaso del balón: se guardan una
+        # sola vez por jugada en vez de filtrar entre los 22 cada vez.
+        self.porteros = tuple(
+            jugador
+            for jugador in self.jugadores
+            if jugador.rol is Rol.PORTERO
+        )
+
         self.portador = None
         self.liberador = None
         self.tiempo_posesion = 0
         self.tiempo_liberacion = (
             pygame.time.get_ticks() - COOLDOWN_LIBERACION
         )
+        self._invalidar_decisiones()
 
         self.balon.colocar_en_el_centro()
         self.estado = Estado.JUGANDO
 
         if con_silbato:
             self.sonidos.silbato()
+
+    def _invalidar_decisiones(self) -> None:
+        """Fuerza a la IA a recalcular sus decisiones en el próximo frame.
+
+        También vacía la caché: así nunca quedan referencias a jugadores
+        de una jugada anterior (al reiniciar se crean otros nuevos).
+        """
+        self._tiempo_decision = (
+            pygame.time.get_ticks() - INTERVALO_DECISION_IA
+        )
+        self._perseguidores = set()
+        self._marcajes = {}
+
+    def _actualizar_decisiones(self) -> None:
+        """Recalcula quién presiona y a quién marca cada defensa."""
+        self._equipo_con_balon = (
+            self.portador.equipo if self.portador is not None else None
+        )
+        self._perseguidores = self._elegir_perseguidores(
+            self._equipo_con_balon
+        )
+        self._marcajes = self._asignar_marcajes(
+            self._equipo_con_balon,
+            self._perseguidores,
+        )
 
     def dar_posesion(self, jugador: Jugador) -> None:
         """Da el balón a un jugador y se lo quita a su dueño anterior."""
@@ -174,6 +216,7 @@ class Juego:
         self.portador = jugador
         self.liberador = None
         self.tiempo_posesion = pygame.time.get_ticks()
+        self._invalidar_decisiones()
 
         if jugador.equipo is Equipo.LOCAL:
             self.jugador_controlado = jugador
@@ -190,6 +233,7 @@ class Juego:
 
         self.portador = None
         self.tiempo_liberacion = pygame.time.get_ticks()
+        self._invalidar_decisiones()
 
         if velocidad is not None:
             self.balon.vel.update(velocidad)
@@ -337,25 +381,26 @@ class Juego:
         ):
             return False
 
-        radio_atajada = self.nivel_actual.parametros.radio_atajada_rival
+        radio_atajada2 = (
+            self.nivel_actual.parametros.radio_atajada_rival**2
+        )
 
-        for jugador in self.jugadores:
-            if jugador.rol is not Rol.PORTERO:
-                continue
-
+        # Solo los dos porteros, ya filtrados: se consulta en cada
+        # subpaso del balón, no hace falta recorrer a los 22 jugadores.
+        for portero in self.porteros:
             if (
-                jugador.pos.distance_squared_to(self.balon.pos)
-                > radio_atajada**2
+                portero.pos.distance_squared_to(self.balon.pos)
+                > radio_atajada2
             ):
                 continue
 
-            hacia_el_arco = -1.0 if jugador.equipo is Equipo.LOCAL else 1.0
+            hacia_el_arco = -1.0 if portero.equipo is Equipo.LOCAL else 1.0
             if self.balon.vel.x * hacia_el_arco <= 0.0:
                 continue
 
             # Mira hacia el campo para que el balón quede delante suyo.
-            jugador.direccion.update(hacia_el_arco * -1.0, 0.0)
-            self.dar_posesion(jugador)
+            portero.direccion.update(hacia_el_arco * -1.0, 0.0)
+            self.dar_posesion(portero)
             return True
 
         return False
@@ -391,12 +436,20 @@ class Juego:
     # --------------------------------------------------
 
     def actualizar_ia(self, dt: float) -> None:
-        equipo_con_balon = (
-            self.portador.equipo if self.portador is not None else None
-        )
+        """Mueve a los jugadores IA según su última decisión táctica.
 
-        perseguidores = self._elegir_perseguidores(equipo_con_balon)
-        marcajes = self._asignar_marcajes(equipo_con_balon, perseguidores)
+        Las decisiones (persecutores, marcajes) se recalculan cada
+        ``INTERVALO_DECISION_IA`` milisegundos y al cambiar la posesión;
+        el movimiento de cada jugador se aplica en todos los fotogramas,
+        así el juego sigue fluido aunque las decisiones no cambien.
+        """
+        ahora = pygame.time.get_ticks()
+
+        if ahora - self._tiempo_decision >= INTERVALO_DECISION_IA:
+            self._tiempo_decision = ahora
+            self._actualizar_decisiones()
+
+        parametros = self.nivel_actual.parametros
 
         # El portador visitante decide entre conducir y disparar.
         if (
@@ -406,6 +459,11 @@ class Juego:
             self._accion_portador_ia(self.portador, dt)
 
         # El resto de los 21 jugadores (menos el humano controlado).
+        velocidad_ia = parametros.velocidad_ia
+        equipo_con_balon = self._equipo_con_balon
+        perseguidores = self._perseguidores
+        marcajes = self._marcajes
+
         for jugador in self.jugadores:
             if jugador is self.portador:
                 continue
@@ -418,11 +476,7 @@ class Juego:
                 jugador in perseguidores,
                 marcajes.get(jugador),
             )
-            jugador.mover_hacia(
-                objetivo,
-                self.nivel_actual.parametros.velocidad_ia,
-                dt,
-            )
+            jugador.mover_hacia(objetivo, velocidad_ia, dt)
 
     def _elegir_perseguidores(
         self,
@@ -657,7 +711,8 @@ class Juego:
         else:
             objetivo = base.copy()
 
-        return acotar_al_campo(objetivo, jugador.RADIO)
+        acotar_posicion(objetivo, jugador.RADIO)
+        return objetivo
 
     def _objetivo_portero(self, jugador: Jugador) -> pygame.Vector2:
         """El portero se desplaza lateralmente siguiendo la Y del balón."""
@@ -675,34 +730,44 @@ class Juego:
     # --------------------------------------------------
 
     def _resolver_colisiones(self) -> None:
-        """Separa suavemente a los jugadores que se superponen."""
+        """Separa suavemente a los jugadores que se superponen.
+
+        Trabaja con coordenadas sueltas en vez de crear un vector por
+        pareja: con 231 parejas y varias iteraciones por fotograma,
+        son cientos de objetos temporales que no hacen falta.
+        """
+        # Todos los jugadores comparten el mismo radio.
+        minima = Jugador.RADIO * 2
+        minima2 = minima * minima
+        factor = FACTOR_COLISION * 0.5
+
         for _ in range(ITERACIONES_COLISION):
             for indice, jugador_a in enumerate(self.jugadores):
                 for jugador_b in self.jugadores[indice + 1:]:
-                    delta = jugador_b.pos - jugador_a.pos
-                    distancia2 = delta.length_squared()
-                    minima = jugador_a.RADIO + jugador_b.RADIO
+                    dx = jugador_b.pos.x - jugador_a.pos.x
+                    dy = jugador_b.pos.y - jugador_a.pos.y
+                    distancia2 = dx * dx + dy * dy
 
-                    if distancia2 >= minima * minima:
+                    if distancia2 >= minima2:
                         continue
 
                     if distancia2 < 1e-12:
-                        normal = pygame.Vector2(1.0, 0.0)
+                        # Totalmente superpuestos: empuje hacia la derecha.
                         distancia = 0.0
+                        normal_x, normal_y = 1.0, 0.0
                     else:
                         distancia = math.sqrt(distancia2)
-                        normal = delta / distancia
+                        normal_x = dx / distancia
+                        normal_y = dy / distancia
 
-                    empuje = (
-                        (minima - distancia) * FACTOR_COLISION * 0.5
-                    )
+                    empuje = (minima - distancia) * factor
                     jugador_a.empujar(
-                        -normal.x * empuje,
-                        -normal.y * empuje,
+                        -normal_x * empuje,
+                        -normal_y * empuje,
                     )
                     jugador_b.empujar(
-                        normal.x * empuje,
-                        normal.y * empuje,
+                        normal_x * empuje,
+                        normal_y * empuje,
                     )
 
     # --------------------------------------------------

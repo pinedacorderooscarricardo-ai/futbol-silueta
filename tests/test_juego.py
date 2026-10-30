@@ -161,6 +161,29 @@ class JuegoTests(unittest.TestCase):
             all(jugador.equipo is Equipo.LOCAL for jugador in perseguidores)
         )
 
+    def test_decisiones_ia_se_renuevan_tras_reiniciar(self) -> None:
+        juego = self.juego
+        juego.actualizar_ia(1.0 / 60.0)
+
+        juego.reiniciar_jugada(con_silbato=False)
+
+        # La caché no debe conservar jugadores de la jugada anterior.
+        self.assertEqual(juego._perseguidores, set())
+        self.assertEqual(juego._marcajes, {})
+        self.assertEqual(len(juego.porteros), 2)
+
+        # Y en el siguiente frame la IA vuelve a decidir quién presiona.
+        visitante = next(
+            jugador
+            for jugador in juego.jugadores
+            if jugador.equipo is Equipo.VISITANTE
+            and jugador.rol is not Rol.PORTERO
+        )
+        juego.dar_posesion(visitante)
+        juego.actualizar_ia(1.0 / 60.0)
+
+        self.assertTrue(juego._perseguidores)
+
     def test_las_colisiones_separan_a_los_jugadores(self) -> None:
         jugador_a, jugador_b = self.juego.jugadores[0:2]
         jugador_b.pos.update(jugador_a.pos)
