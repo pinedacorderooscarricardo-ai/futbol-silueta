@@ -184,6 +184,19 @@ VELOCIDAD_MINIMA_ATAJADA = 320.0
 DURACION_POSESION_PORTERO = 900
 FUERZA_DESPEJE_PORTERO = 620.0
 
+# Porteros inteligentes: anticipación, lances y errores.
+# Milisegundos que dura un lance y de enfriamiento antes del siguiente.
+DURACION_LANCE_PORTERO = 450
+ENFRIAMIENTO_LANCE = 650
+# Desvío vertical (px) a partir del cual el portero se lanza.
+UMBRAL_LANCE_Y = 16.0
+# Solo se lanza si el disparo llegará a su línea antes de este tiempo (s).
+TIEMPO_LLEGADA_LANCE = 0.9
+# Píxeles que puede adelantarse o retrasarse de su línea en el lance.
+MARGEN_LANCE_X = 36.0
+# Error máximo de predicción (px) de un portero con la peor calidad.
+DESVIO_ERROR_PORTERO = 120.0
+
 # ============================================================
 # 10. Disparo de la IA
 # ============================================================
@@ -191,6 +204,9 @@ FUERZA_DESPEJE_PORTERO = 620.0
 DISTANCIA_DISPARO_IA = 220.0
 TIEMPO_MINIMO_POSESION_IA = 450
 FACTOR_APUNTADO_DISPARO = 0.7
+# El portero se considera centrado (y la IA tira al palo más lejano al
+# propio tirador) si está a menos de esta distancia del centro del arco.
+PORTERO_CENTRADO_TOLERANCIA = 12.0
 
 # ============================================================
 # 11. Audio
@@ -207,8 +223,8 @@ VOLUMEN_DISPARO = 0.40
 # ============================================================
 
 TEXTO_AYUDA = (
-    "WASD/Flechas: mover | SHIFT: sprintar | "
-    "ESPACIO: chutar | E: pasar | ESC: pausa | F3: rendimiento"
+    "WASD/Flechas: mover | SHIFT: sprintar | ESPACIO: chutar | "
+    "E: pasar | Q: cambiar jugador | ESC: pausa | F3: rendimiento"
 )
 TEXTO_CONTINUAR = "Pulsa ESPACIO para continuar"
 TEXTO_ENTRETIEMPO = "Pulsa ESPACIO para el segundo tiempo"
@@ -296,15 +312,17 @@ FORMACION_532: tuple[PosicionFormacion, ...] = (
     PosicionFormacion(Rol.DELANTERO, 0.68, 0.60),
 )
 
-# Formaciones disponibles en el menú de tácticas, en orden de elección.
-NOMBRES_FORMACION: tuple[str, ...] = ("4-4-2", "4-3-3", "3-5-2", "5-3-2")
-
+# Catálogo de tácticas: añadir aquí una formación nueva basta para que
+# aparezca en el menú de tácticas y sea valida en el resto del juego.
 FORMACIONES: dict[str, tuple[PosicionFormacion, ...]] = {
     "4-4-2": FORMACION_442,
     "4-3-3": FORMACION_433,
     "3-5-2": FORMACION_352,
     "5-3-2": FORMACION_532,
 }
+
+# Nombres derivados del catálogo, en su orden de inserción.
+NOMBRES_FORMACION: tuple[str, ...] = tuple(FORMACIONES)
 
 # Formación por defecto, para el código que no indica una táctica.
 FORMACION: tuple[PosicionFormacion, ...] = FORMACION_442

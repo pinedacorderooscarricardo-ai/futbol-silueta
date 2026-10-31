@@ -7,7 +7,7 @@ from enum import StrEnum
 import pygame
 
 from .configuracion import Color
-from .utilidades import DIRECTORIO_IMAGENES
+from .utilidades import DIRECTORIO_IMAGENES, cargar_imagen
 
 
 def nombre_archivo_escudo(nivel: int) -> str:
@@ -24,7 +24,7 @@ def cargar_escudo(nivel: int) -> pygame.Surface:
 
     if superficie is None:
         ruta = DIRECTORIO_IMAGENES / "escudos" / nombre_archivo_escudo(nivel)
-        superficie = pygame.image.load(ruta).convert()
+        superficie = cargar_imagen(ruta)
         _IMAGENES[nivel] = superficie
 
     return superficie

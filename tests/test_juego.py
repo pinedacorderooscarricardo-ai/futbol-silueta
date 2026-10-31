@@ -31,6 +31,7 @@ from futbol_silueta.configuracion import (
     Rol,
 )
 from futbol_silueta.juego import Juego
+from futbol_silueta.estadios import Cesped, Diseno, Estadio, Momento
 from futbol_silueta.niveles import parametros_de_nivel
 from futbol_silueta.plantilla import aplicar_formacion
 from futbol_silueta.repeticion import aplicar_instante, capturar_instante
@@ -313,6 +314,112 @@ class JuegoTests(unittest.TestCase):
             self.vista.dibujar(self.juego)
 
         self.assertIsInstance(self.juego.estado, Estado)
+
+    def test_personalizar_el_estadio_cambia_la_seleccion(self) -> None:
+        estadio = Estadio(
+            Cesped.ARTIFICIAL,
+            Momento.NOCHE,
+            Diseno.RAYAS,
+            False,
+        )
+        self.juego.personalizar_estadio(estadio)
+
+        self.assertEqual(self.juego.estadio, estadio)
+
+    def test_el_fondo_refleja_el_estadio_elegido(self) -> None:
+        juego = self.juego
+        vista = self.vista
+
+        # Día claro por defecto, con gradas y público alrededor.
+        vista.dibujar(juego)
+        punto_cesped = (CAMPO_RECT.centerx - 200, CAMPO_RECT.centery + 150)
+        dia = vista.pantalla.get_at(punto_cesped)
+
+        juego.personalizar_estadio(
+            Estadio(Cesped.CLARO, Momento.NOCHE, Diseno.CLASICO, True)
+        )
+        vista.dibujar(juego)
+        noche = vista.pantalla.get_at(punto_cesped)
+        self.assertLess(noche.r, dia.r)
+
+        # Sin gradas, el entorno pasa a ser un cordón de césped.
+        juego.personalizar_estadio(
+            Estadio(Cesped.CLARO, Momento.DIA, Diseno.CLASICO, False)
+        )
+        vista.dibujar(juego)
+        esquina = vista.pantalla.get_at((8, 8))
+        self.assertGreater(esquina.g, 60)
+
+        # Y las rayas del diseño alternan dos tonos de césped.
+        juego.personalizar_estadio(
+            Estadio(Cesped.CLARO, Momento.DIA, Diseno.RAYAS, False)
+        )
+        vista.dibujar(juego)
+        banda_a = vista.pantalla.get_at((CAMPO_RECT.left + 20, punto_cesped[1]))
+        banda_b = vista.pantalla.get_at((CAMPO_RECT.left + 110, punto_cesped[1]))
+        self.assertNotEqual(banda_a.r, banda_b.r)
+
+    def test_cambiar_jugador_pasa_al_local_mas_cercano_al_balon(self) -> None:
+        juego = self.juego
+        control = juego.jugador_controlado
+        assert control is not None
+
+        # El control empieza lejos del balón (que queda en el centro).
+        control.pos.update(CAMPO_RECT.left + 50, CAMPO_RECT.centery)
+        control.actualizar_rect()
+
+        esperado = min(
+            (
+                jugador
+                for jugador in juego.jugadores
+                if jugador.equipo is Equipo.LOCAL
+                and jugador.rol is not Rol.PORTERO
+                and jugador is not control
+            ),
+            key=lambda jugador: jugador.pos.distance_squared_to(
+                juego.balon.pos
+            ),
+        )
+
+        juego.procesar_tecla(pygame.K_q)
+
+        self.assertIs(juego.jugador_controlado, esperado)
+
+    def test_cambiar_jugador_cicla_entre_los_locales(self) -> None:
+        juego = self.juego
+
+        for _ in range(3):
+            anterior = juego.jugador_controlado
+            juego.procesar_tecla(pygame.K_q)
+            actual = juego.jugador_controlado
+
+            self.assertIsNot(actual, anterior)
+            self.assertIs(actual.equipo, Equipo.LOCAL)
+            self.assertIsNot(actual.rol, Rol.PORTERO)
+
+    def test_cambiar_jugador_no_se_aplica_con_posesion_local(self) -> None:
+        juego = self.juego
+        control = juego.jugador_controlado
+        juego.dar_posesion(control)
+
+        juego.procesar_tecla(pygame.K_q)
+
+        self.assertIs(juego.jugador_controlado, control)
+
+    def test_cambiar_jugador_saca_el_control_del_portero(self) -> None:
+        juego = self.juego
+        portero = next(
+            jugador
+            for jugador in juego.jugadores
+            if jugador.equipo is Equipo.LOCAL
+            and jugador.rol is Rol.PORTERO
+        )
+        juego.jugador_controlado = portero
+
+        juego.procesar_tecla(pygame.K_q)
+
+        self.assertIsNot(juego.jugador_controlado, portero)
+        self.assertIsNot(juego.jugador_controlado.rol, Rol.PORTERO)
 
     def test_avanza_al_siguiente_nivel_tras_el_final(self) -> None:
         self.juego.estado = Estado.FINAL

@@ -23,6 +23,7 @@ from futbol_silueta.configuracion import (
     Equipo,
     Estado,
 )
+from futbol_silueta.estadios import Cesped, Diseno, Momento
 from futbol_silueta.juego import Juego
 from futbol_silueta.menus import Accion, Boton, Menus, Pantalla
 from futbol_silueta.uniformes import UNIFORMES_POR_DEFECTO
@@ -579,6 +580,88 @@ def flujo_repeticion() -> None:
     )
 
 
+def flujo_estadio() -> None:
+    """Pantalla de estadio: ciclar opciones y aplicarlas al partido."""
+    menus = nueva()
+    menus._ejecutar(Accion.OPCIONES)
+    menus._ejecutar(Accion.ESTADIO)
+    comprobar("opciones -> estadio", menus.pantalla, Pantalla.ESTADIO)
+
+    menus._ejecutar(Accion.CESPED)
+    menus._ejecutar(Accion.MOMENTO)
+    menus._ejecutar(Accion.DISENO)
+    menus._ejecutar(Accion.GRADAS)
+
+    estadio = menus.estadio_seleccionado
+    comprobar_valor("césped cicla a oscuro", estadio.cesped, Cesped.OSCURO)
+    comprobar_valor("momento pasa a noche", estadio.momento, Momento.NOCHE)
+    comprobar_valor("diseño pasa a rayas", estadio.diseno, Diseno.RAYAS)
+    comprobar_valor("gradas sin aficionados", estadio.gradas, False)
+
+    etiquetas = {
+        boton.accion: boton.etiqueta
+        for boton in menus.botones[Pantalla.ESTADIO]
+    }
+    comprobar_valor(
+        "etiqueta del césped muestra OSCURO",
+        etiquetas[Accion.CESPED],
+        "Césped: OSCURO",
+    )
+
+    vista = Vista(pygame.display.get_surface())
+    juego = Juego(vista)
+    juego.personalizar_estadio(estadio)
+    superficie = pygame.Surface((ANCHO, ALTO))
+    try:
+        vista.dibujar(juego)
+        menus.pantalla = Pantalla.ESTADIO
+        menus.dibujar(superficie)
+        print("ok     el estadio nocturno se dibuja sin errores")
+    except Exception as error:  # noqa: BLE001
+        print(f"FALLO  estadio en pantalla: {error}")
+        fallos.append("estadio en pantalla")
+
+    menus.procesar_tecla(pygame.K_ESCAPE)
+    comprobar(
+        "ESC en estadio regresa a opciones",
+        menus.pantalla,
+        Pantalla.OPCIONES,
+    )
+
+
+def flujo_cambio_jugador() -> None:
+    """Q cicla el control entre los jugadores de campo locales."""
+    juego = Juego(None)
+    juego.nueva_partida(con_silbato=False)
+    inicial = juego.jugador_controlado
+
+    juego.procesar_tecla(pygame.K_q)
+    if juego.jugador_controlado is inicial:
+        print("FALLO  Q no cambia el jugador controlado")
+        fallos.append("cambio de jugador")
+    else:
+        print("ok     Q cambia el jugador controlado")
+
+    for _ in range(9):
+        juego.procesar_tecla(pygame.K_q)
+
+    if juego.jugador_controlado is inicial:
+        print("ok     diez pulsaciones devuelven el control al inicial")
+    else:
+        print("FALLO  el ciclo no vuelve al jugador inicial")
+        fallos.append("ciclo de cambio de jugador")
+
+    # Con posesión local el control acompaña a quien lleva el balón.
+    juego.dar_posesion(juego.jugador_controlado)
+    elegido = juego.jugador_controlado
+    juego.procesar_tecla(pygame.K_q)
+    if juego.jugador_controlado is elegido:
+        print("ok     con posesión local el control no cambia")
+    else:
+        print("FALLO  Q cambió el control con posesión local")
+        fallos.append("cambio con posesión local")
+
+
 def main() -> None:
     pygame.init()
     pygame.display.set_mode((ANCHO, ALTO))
@@ -594,6 +677,8 @@ def main() -> None:
     flujo_editor_con_pausa()
     flujo_editor_en_partido()
     flujo_repeticion()
+    flujo_estadio()
+    flujo_cambio_jugador()
 
     pygame.quit()
 

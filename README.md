@@ -122,7 +122,7 @@ ejecutable) y se recupera al arrancar:
 
 | Tabla | Contenido |
 | --- | --- |
-| `ajustes` | Sonido, escudo (color, borde y forma), dorsales visibles, formación táctica y los uniformes de los dos equipos |
+| `ajustes` | Sonido, escudo (color, borde y forma), dorsales visibles, formación táctica, los uniformes de los dos equipos y el estadio (césped, momento, diseño y gradas) |
 | `jugadores` | Las 22 fichas de la plantilla: nombre, dorsal, rol, posición y factores de velocidad y fuerza |
 
 Los datos se guardan al empezar o reiniciar un partido y al cerrar el
@@ -131,6 +131,46 @@ existe se crea con los valores por defecto; si está dañada o bloqueada,
 el juego sigue funcionando con los valores en memoria y no guarda, sin
 avisos ni fallos. La carga es atómica: una base con datos a medias no
 deja los menús en un estado mezclado.
+
+## Estadios personalizados
+
+En **Opciones → Estadio** se configura el escenario del partido con
+vista previa en vivo del conjunto:
+
+- **Césped:** claro, oscuro o artificial (este último, más uniforme y
+  con un tono azulado).
+- **Momento:** de día, a plena luz, o de noche, con todo el estadio
+  atenuado y el público apagado.
+- **Gradas:** con aficionados sentados alrededor de la cancha o un
+  cordón de césped vacío. El público se genera con una semilla fija,
+  así que cada estadio se ve igual en todas las partidas.
+- **Diseño de cancha:** clásico (liso), rayas de corte, ajedrez o
+  anillos concéntricos desde el círculo central.
+
+El estadio elegido se aplica al iniciar o reiniciar una partida: el
+fondo se pre-renderiza una sola vez por configuración, así que no
+cuesta nada por fotograma. También queda guardado en la base de datos
+junto al resto de la personalización. La opción en curso se marca en
+la etiqueta de cada botón y las flechas ←/→ ajustan césped, momento y
+diseño hacia atrás o adelante.
+
+## Porteros inteligentes
+
+Los dos porteros ya no se limitan a seguir el balón: cubren el ángulo,
+**anticipan los disparos**, **se lanzan** y **cometen errores** según
+su calidad. Cuando detectan un disparo rápido hacia su arco, esperan
+su tiempo de reacción, predicen dónde cruzará el balón proyectando su
+trayectoria y se lanzan si el punto queda fuera de su alcance; durante
+el lance sus manos llegan más lejos (aro blanco sobre el portero).
+
+La calidad del **portero rival** escala con el nivel de la campaña: en
+los primeros niveles se equivoca a menudo (se lanza al palo equivocado
+o llega tarde), tarda en reaccionar y adivina poco la trayectoria; en
+los últimos casi no falla. El **portero local** tiene calidad fija:
+seguro pero no perfecto. Cuando un portero "falla" un disparo, se lanza
+igualmente —al sitio equivocado— y el balón se le escapa entre las
+manos. Los ajustes de lances y errores están en `configuracion.py` y
+las calidades por nivel en `porteros.py`.
 
 ## Requisitos
 
@@ -182,6 +222,7 @@ genera localmente en `dist/` con el script anterior.
 | `SHIFT` | Sprintar mientras quede energía |
 | `ESPACIO` | Chutar / avanzar tras un gol (celebración → repetición → saque), descanso o final |
 | `E` | Pasar al compañero más cercano |
+| `Q` | Cambiar el jugador controlado (cicla entre los locales por cercanía al balón) |
 | `ESC` | En partido abre la pausa; en menús vuelve o sale |
 | Ratón | Elegir y pulsar los botones de los menús |
 | Flechas o `W/S` | Elegir una opción en los menús |
@@ -195,6 +236,12 @@ Al inicio de cada jugada se controla al delantero local más cercano al
 centro del campo. El control cambia automáticamente al compañero local
 que recibe el balón; si el portero local atrapa un disparo, también pasa
 a ser controlado.
+
+También se puede cambiar de futbolista a mano con `Q`: cada pulsación
+entrega el control al siguiente jugador de campo local más cercano al
+balón, así que la primera ya toma al más conveniente y las siguientes
+recorren al resto (diez pulsaciones dan la vuelta completa). Con
+posesión local el control acompaña siempre a quien lleva el balón.
 
 ### Indicadores en pantalla
 
@@ -241,15 +288,18 @@ el teclado.
   principal.
 - **Opciones:** activa o desactiva los efectos de sonido (se aplica al
   instante y se conserva mientras el juego esté abierto), abre la
-  elección de tácticas, la de uniformes, la del escudo y el editor de
-  jugadores, o vuelve atrás.
+  elección de tácticas, la de uniformes, la del escudo, el editor de
+  jugadores y la del estadio, o vuelve atrás.
 - **Tácticas:** elige la formación del equipo (4-4-2, 4-3-3, 3-5-2 o
   5-3-2) con vista previa del campo; la formación en uso queda marcada.
+- **Estadio:** personaliza el césped (claro, oscuro o artificial), el
+  momento (día o noche), las gradas con aficionados y el diseño de
+  corte de la cancha, con vista previa en vivo.
 - **Cómo jugar:** resume los controles, los indicadores en pantalla y
   las reglas del partido.
 
 `ESC` también funciona como botón "volver" en las pantallas de
-configuración, ayuda, escudo, uniformes, editor y tácticas. La navegación usa una
+configuración, ayuda, escudo, uniformes, editor, tácticas y estadio. La navegación usa una
 pila: cada pantalla guarda de dónde se llegó, así que `Volver` o `ESC`
 regresan siempre a la pantalla anterior aunque se hayan encadenado
 varias (por ejemplo Pausa → Opciones → Editor); volver deshace la ruta
@@ -282,7 +332,8 @@ futbol-silueta/
 │   ├── test_menus.py           # Pruebas de menús y botones
 │   ├── test_aplicacion.py      # Pruebas del bucle y las pantallas
 │   ├── test_escudos.py         # Pruebas de escudos y personalización
-│   └── test_guardado.py        # Pruebas de la base de datos SQLite
+│   ├── test_guardado.py        # Pruebas de la base de datos SQLite
+│   └── test_porteros.py        # Pruebas de los porteros inteligentes
 └── futbol_silueta/
     ├── __init__.py
     ├── configuracion.py        # Constantes, colores, formación y textos
@@ -293,7 +344,9 @@ futbol-silueta/
     ├── escudos.py              # Escudos por nivel y personalización
     ├── uniformes.py            # Equipaciones, dorsales y figura del jugador
     ├── plantilla.py            # Fichas de jugadores: nombres, dorsal y atributos
+    ├── porteros.py             # IA de porteros: anticipación, lances y errores
     ├── repeticion.py           # Instantes congelados para repetir goles
+    ├── estadios.py             # Césped, momento, gradas y diseño de cancha
     ├── niveles.py              # Niveles de la campaña y dificultad
     ├── vista.py                # Todo el dibujo de la partida
     ├── menus.py                # Fondos, botones y pantallas de menú
@@ -304,8 +357,11 @@ futbol-silueta/
 ## Pruebas
 
 La suite usa SDL en modo headless, así que no abre ventana ni necesita
-audio real. Incluye 61 pruebas de simulación, repeticiones de gol, menús,
-botones, tácticas, guardado, bucle principal, escudos y dibujo:
+audio real. Incluye 84 pruebas de simulación, porteros inteligentes,
+repeticiones de gol, cambio de jugador,
+estadios, menús, botones, tácticas, guardado, bucle principal, escudos,
+utilidades (carga de imágenes con reserva y plantillas incompletas)
+y dibujo:
 
 ```bash
 python -m unittest discover -s tests -t . -v
@@ -320,9 +376,10 @@ python tests/test_aplicacion.py
 ```
 
 Además, `verificar_navegacion.py` recorre a mano los flujos de menús,
-uniformes y editor (la pila de vuelta, ESC en cada pantalla, el ciclado
-de colores por prenda, la edición de nombres y dorsales, los ajustes de
-velocidad y fuerza, y la llegada de uniformes y fichas a los jugadores):
+uniformes, editor, repeticiones, estadio y cambio de jugador (la pila
+de vuelta, ESC en cada pantalla, el ciclado de colores por prenda, la
+edición de nombres y dorsales, los ajustes de velocidad y fuerza, y la
+llegada de uniformes, fichas y estadio a los jugadores):
 
 ```bash
 python verificar_navegacion.py
@@ -330,10 +387,41 @@ python verificar_navegacion.py
 
 ## Cambios de esta versión
 
-- Se añadió el guardado en SQLite: sonido, escudo, uniformes, formación
-  y las 22 fichas del editor de jugadores se guardan en
+- Se añadió el cambio manual de jugador: con `Q` el control pasa al
+  siguiente jugador de campo local más cercano al balón (la primera
+  pulsación toma al más conveniente y el ciclo da la vuelta completa);
+  con posesión local el control acompaña siempre a quien conduce.
+- Se añadieron los porteros inteligentes: anticipan los disparos
+  proyectando la trayectoria del balón, se lanzan hacia el punto de
+  intercepción (con aro blanco y manos más amplias durante el lance) y
+  cometen errores —llegan tarde, se lanzan al palo equivocado o dejan
+  escapar el balón— según su calidad.
+- La calidad del portero rival escala con el nivel de la campaña (en el
+  1 falla mucho y en el 11 casi nada); el portero local mantiene una
+  calidad fija, segura pero no perfecta.
+- Robustez de assets: las imágenes (escudos y fondos de menú) se cargan
+  con una reserva generada si el archivo falta o está dañado, en lugar
+  de abortar al arrancar; el localizador de imágenes vive en un solo
+  lugar (`utilidades`) y ya no está duplicado.
+- La plantilla guardada se normaliza a once fichas por equipo al crear
+  a los jugadores: si quedó corta o larga (datos antiguos o dañados), el
+  campo siempre sale completo con los jugadores por defecto.
+- Las formaciones de tácticas tienen un único catálogo (`FORMACIONES`):
+  los nombres del menú se derivan de él, así que añadir una táctica
+  nueva es una sola entrada.
+- Los botones de menú validan su valor (tipo e índice) antes de usarlo
+  y la puntería de la IA usa una constante documentada en vez de un
+  número mágico.
+- Se añadieron los estadios personalizados: césped claro, oscuro o
+  artificial; estadio de día o de noche; gradas con aficionados
+  generados con semilla fija; y cuatro diseños de corte de la cancha
+  (clásico, rayas, ajedrez y círculos), todo con vista previa en vivo
+  en Opciones → Estadio y aplicado al fondo del partido.
+- Se añadió el guardado en SQLite: sonido, escudo, uniformes, formación,
+  estadio y las 22 fichas del editor de jugadores se guardan en
   `futbol_silueta.sqlite` al empezar un partido y al cerrar, y se
-  recuperan al arrancar.
+  recuperan al arrancar. Las bases creadas antes de los estadios se
+  migran solas con los valores por defecto.
 - La base de datos se crea sola en el primer arranque y es tolerante a
   fallos: si el archivo está dañado o bloqueado, el juego sigue
   funcionando con los valores en memoria.

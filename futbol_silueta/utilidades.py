@@ -31,6 +31,28 @@ def _directorio_imagenes() -> Path:
 
 DIRECTORIO_IMAGENES = _directorio_imagenes()
 
+# Tamaño del cuadro de reserva cuando falta un archivo gráfico.
+RESERVA_TAMANO = 256
+
+
+def cargar_imagen(ruta: Path) -> pygame.Surface:
+    """Carga una imagen; si falta o está dañada, devuelve una reserva.
+
+    La reserva (un cuadro oscuro con borde rojo) mantiene el juego
+    funcionando y la suite en pie aunque falte algún asset, en lugar de
+    abortar con una excepción al arrancar.
+    """
+    try:
+        return pygame.image.load(ruta).convert()
+    except (pygame.error, OSError):
+        print(f"Aviso: no se pudo cargar {ruta}; se usa una reserva.",
+              file=sys.stderr)
+
+    reserva = pygame.Surface((RESERVA_TAMANO, RESERVA_TAMANO))
+    reserva.fill((30, 32, 40))
+    pygame.draw.rect(reserva, (200, 60, 60), reserva.get_rect(), 6)
+    return reserva
+
 
 def acotar(valor: float, minimo: float, maximo: float) -> float:
     """Limita ``valor`` al rango ``[minimo, maximo]``."""

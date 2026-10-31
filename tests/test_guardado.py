@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -18,8 +19,9 @@ import pygame
 
 from futbol_silueta.configuracion import ALTO, ANCHO, Equipo
 from futbol_silueta.escudos import ESCUDO_PRESETS, FORMAS_ESCUDO
+from futbol_silueta.estadios import Cesped, Momento
 from futbol_silueta.guardado import Guardado
-from futbol_silueta.menus import Accion, Boton, Menus
+from futbol_silueta.menus import Accion, Boton, Menus, Pantalla
 from futbol_silueta.plantilla import PRESETS_VELOCIDAD
 from futbol_silueta.uniformes import UNIFORME_PRESETS
 
@@ -101,6 +103,77 @@ class GuardadoTests(unittest.TestCase):
             otros.plantillas_seleccionadas[Equipo.LOCAL][0].factor_velocidad,
             PRESETS_VELOCIDAD[2][1],
         )
+
+    def test_el_estadio_queda_guardado_y_cargado(self) -> None:
+        menus = Menus()
+        menus._ejecutar(Accion.CESPED)  # Claro -> oscuro
+        menus._ejecutar(Accion.MOMENTO)  # Día -> noche
+        menus._ejecutar(Accion.GRADAS)  # Con -> sin aficionados
+        self.abrir().guardar_desde(menus)
+
+        otros = Menus()
+        self.abrir().cargar_en(otros)
+
+        estadio = otros.estadio_seleccionado
+        self.assertIs(estadio.cesped, Cesped.OSCURO)
+        self.assertIs(estadio.momento, Momento.NOCHE)
+        self.assertFalse(estadio.gradas)
+        self.assertEqual(
+            otros.botones[Pantalla.ESTADIO][0].etiqueta,
+            "Césped: OSCURO",
+        )
+
+    def test_base_de_version_anterior_se_migra(self) -> None:
+        # Base creada antes de los estadios: sin sus columnas.
+        conexion = sqlite3.connect(self.ruta)
+        conexion.execute(
+            """
+            CREATE TABLE ajustes (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                sonido_activado INTEGER NOT NULL DEFAULT 1,
+                escudo_color TEXT NOT NULL,
+                escudo_color_borde TEXT NOT NULL,
+                escudo_forma TEXT NOT NULL,
+                mostrar_numeros INTEGER NOT NULL DEFAULT 1,
+                formacion TEXT NOT NULL,
+                local_camiseta TEXT NOT NULL,
+                local_pantalon TEXT NOT NULL,
+                local_medias TEXT NOT NULL,
+                visitante_camiseta TEXT NOT NULL,
+                visitante_pantalon TEXT NOT NULL,
+                visitante_medias TEXT NOT NULL
+            )
+            """
+        )
+        conexion.execute(
+            """
+            INSERT INTO ajustes (
+                id, escudo_color, escudo_color_borde, escudo_forma,
+                formacion, local_camiseta, local_pantalon, local_medias,
+                visitante_camiseta, visitante_pantalon, visitante_medias
+            ) VALUES (1, '10,20,30', '40,50,60', ?, '4-4-2',
+                      '200,40,40', '200,40,40', '200,40,40',
+                      '40,80,200', '40,80,200', '40,80,200')
+            """,
+            (FORMAS_ESCUDO[0].value,),
+        )
+        conexion.commit()
+        conexion.close()
+
+        guardado = self.abrir()
+        menus = Menus()
+        guardado.cargar_en(menus)
+
+        # Los ajustes viejos se cargan y el estadio toma el defecto.
+        self.assertEqual(menus.escudo_color, (10, 20, 30))
+        self.assertIs(menus.estadio_seleccionado.cesped, Cesped.CLARO)
+
+        # Y el guardado sigue funcionando con la base migrada.
+        menus._ejecutar(Accion.CESPED)
+        guardado.guardar_desde(menus)
+        otros = Menus()
+        self.abrir().cargar_en(otros)
+        self.assertIs(otros.estadio_seleccionado.cesped, Cesped.OSCURO)
 
     def test_base_sin_datos_deja_los_valores_por_defecto(self) -> None:
         self.abrir().cerrar()

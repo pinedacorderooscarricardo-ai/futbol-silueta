@@ -1,10 +1,10 @@
 """Persistencia en SQLite de la configuración y la plantilla del juego.
 
 Guarda todo lo que el jugador personaliza en los menús (sonido, escudo,
-uniformes, formación y las fichas del editor de jugadores) para que se
-conserven entre sesiones. Si la base de datos no existe se crea al
-arrancar; si está corrupta o bloqueada, el juego sigue funcionando con
-los valores por defecto y simplemente no guarda.
+uniformes, formación, estadio y las fichas del editor de jugadores)
+para que se conserven entre sesiones. Si la base de datos no existe se
+crea al arrancar; si está corrupta o bloqueada, el juego sigue
+funcionando con los valores por defecto y simplemente no guarda.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from .configuracion import Color, Equipo, Rol
 from .escudos import FormaEscudo
+from .estadios import Cesped, Diseno, Estadio, Momento
 from .plantilla import JugadorPlantilla
 from .uniformes import Uniforme
 from .utilidades import acotar
@@ -62,6 +63,7 @@ class Guardado:
             self.conexion = sqlite3.connect(self.ruta)
             self.conexion.row_factory = sqlite3.Row
             self._crear_tablas()
+            self._migrar()
         except sqlite3.Error:
             self._desactivar()
             return
@@ -98,7 +100,11 @@ class Guardado:
                     local_medias TEXT NOT NULL,
                     visitante_camiseta TEXT NOT NULL,
                     visitante_pantalon TEXT NOT NULL,
-                    visitante_medias TEXT NOT NULL
+                    visitante_medias TEXT NOT NULL,
+                    estadio_cesped TEXT NOT NULL DEFAULT 'claro',
+                    estadio_momento TEXT NOT NULL DEFAULT 'dia',
+                    estadio_diseno TEXT NOT NULL DEFAULT 'clasico',
+                    estadio_gradas INTEGER NOT NULL DEFAULT 1
                 )
                 """
             )
@@ -119,6 +125,31 @@ class Guardado:
                 """
             )
 
+    def _migrar(self) -> None:
+        """Añade las columnas nuevas a bases de versiones anteriores.
+
+        ``CREATE TABLE IF NOT EXISTS`` no toca las bases ya creadas:
+        aquí se completan con las columnas que falten, con valores por
+        defecto, para que el guardado siga funcionando con bases viejas.
+        """
+        assert self.conexion is not None
+        columnas = {
+            fila[1]
+            for fila in self.conexion.execute("PRAGMA table_info(ajustes)")
+        }
+
+        with self.conexion:
+            for nombre, tipo in (
+                ("estadio_cesped", "TEXT NOT NULL DEFAULT 'claro'"),
+                ("estadio_momento", "TEXT NOT NULL DEFAULT 'dia'"),
+                ("estadio_diseno", "TEXT NOT NULL DEFAULT 'clasico'"),
+                ("estadio_gradas", "INTEGER NOT NULL DEFAULT 1"),
+            ):
+                if nombre not in columnas:
+                    self.conexion.execute(
+                        f"ALTER TABLE ajustes ADD COLUMN {nombre} {tipo}"
+                    )
+
     # --------------------------------------------------
     # Guardar y cargar
     # --------------------------------------------------
@@ -131,6 +162,7 @@ class Guardado:
         uniformes = menus.uniformes_seleccionados
         local = uniformes[Equipo.LOCAL]
         visitante = uniformes[Equipo.VISITANTE]
+        estadio = menus.estadio_seleccionado
         fichas = menus.plantillas_seleccionadas
         filas = [
             (
@@ -158,8 +190,9 @@ class Guardado:
                         mostrar_numeros, formacion,
                         local_camiseta, local_pantalon, local_medias,
                         visitante_camiseta, visitante_pantalon,
-                        visitante_medias
-                    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        visitante_medias, estadio_cesped,
+                        estadio_momento, estadio_diseno, estadio_gradas
+                    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         int(menus.sonido_activado),
@@ -174,6 +207,10 @@ class Guardado:
                         _color_a_texto(visitante.camiseta),
                         _color_a_texto(visitante.pantalon),
                         _color_a_texto(visitante.medias),
+                        estadio.cesped.value,
+                        estadio.momento.value,
+                        estadio.diseno.value,
+                        int(estadio.gradas),
                     ),
                 )
                 self.conexion.execute("DELETE FROM jugadores")
@@ -226,6 +263,12 @@ class Guardado:
                 ),
             }
             plantillas = self._cargar_plantilla()
+            estadio = Estadio(
+                Cesped(fila["estadio_cesped"]),
+                Momento(fila["estadio_momento"]),
+                Diseno(fila["estadio_diseno"]),
+                bool(fila["estadio_gradas"]),
+            )
         except (sqlite3.Error, ValueError, TypeError, IndexError):
             # Datos corruptos o incompletos: se conservan los de memoria.
             return
@@ -241,6 +284,7 @@ class Guardado:
         if plantillas is not None:
             menus.plantillas_editables = plantillas
 
+        menus.adoptar_estadio(estadio)
         menus._actualizar_etiqueta_sonido()
         menus._actualizar_etiquetas_uniforme()
         menus._actualizar_etiquetas_editor()

@@ -78,6 +78,8 @@ class Jugador:
         )
         self.numero = numero
         self.nombre = nombre
+        # Milisegundos que faltan para terminar un lance (solo porteros).
+        self.lance_restante = 0.0
         self.uniforme = (
             uniforme
             if uniforme is not None
@@ -187,6 +189,25 @@ class Jugador:
         return sprite.convert_alpha()
 
 
+def _fichas_normalizadas(
+    equipo: Equipo,
+    fichas: tuple[JugadorPlantilla, ...] | None,
+) -> tuple[JugadorPlantilla, ...]:
+    """Devuelve once fichas para ``equipo``, completando o recortando.
+
+    Si la plantilla guardada quedó corta (una versión anterior, datos
+    incompletos) se completa con las fichas por defecto; si quedó larga,
+    se recorta. Así el partido siempre tiene 22 jugadores.
+    """
+    por_defecto = plantilla_por_defecto(equipo)
+
+    if fichas is None:
+        return por_defecto
+
+    relleno = por_defecto[len(fichas):]
+    return (*fichas[: len(FORMACION)], *relleno)
+
+
 def crear_jugadores(
     uniformes: dict[Equipo, Uniforme] | None = None,
     mostrar_numeros: bool = True,
@@ -196,7 +217,8 @@ def crear_jugadores(
 
     Cada equipo recibe su uniforme y las fichas de su plantilla (nombre,
     dorsal, rol, posición y atributos). Sin plantilla se usa la formación
-    base con dorsales del 1 al 11.
+    base con dorsales del 1 al 11; una plantilla incompleta se completa
+    con fichas por defecto en vez de dejar huecos en el campo.
     """
     jugadores: list[Jugador] = []
 
@@ -205,15 +227,9 @@ def crear_jugadores(
             equipo,
             UNIFORMES_POR_DEFECTO[equipo],
         )
-        fichas = (plantillas or {}).get(equipo)
-
-        if fichas is None:
-            fichas = plantilla_por_defecto(equipo)
-
-        for ficha, _posicion in zip(
-            fichas,
-            FORMACION,
-            strict=False,
+        for ficha in _fichas_normalizadas(
+            equipo,
+            (plantillas or {}).get(equipo),
         ):
             fraccion_x = ficha.x
 

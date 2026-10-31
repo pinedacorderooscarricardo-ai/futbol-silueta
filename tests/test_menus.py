@@ -18,6 +18,7 @@ import pygame
 
 from futbol_silueta.configuracion import ALTO, ANCHO, Equipo, Rol
 from futbol_silueta.escudos import ESCUDO_PRESETS, FORMAS_ESCUDO
+from futbol_silueta.estadios import Cesped, Diseno, Momento
 from futbol_silueta.menus import Accion, Menus, Pantalla
 
 
@@ -161,8 +162,9 @@ class MenusTests(unittest.TestCase):
             "Sonido: DESACTIVADO",
         )
 
-        # "Volver" es el sexto botón de Opciones, tras Tácticas,
-        # Uniformes, escudo y el editor de jugadores.
+        # "Volver" es el séptimo botón de Opciones, tras Tácticas,
+        # Uniformes, escudo, el editor de jugadores y Estadio.
+        self.menus.procesar_tecla(pygame.K_DOWN)
         self.menus.procesar_tecla(pygame.K_DOWN)
         self.menus.procesar_tecla(pygame.K_DOWN)
         self.menus.procesar_tecla(pygame.K_DOWN)
@@ -263,6 +265,41 @@ class MenusTests(unittest.TestCase):
         self.menus.procesar_tecla(pygame.K_ESCAPE)
         self.assertIs(self.menus.pantalla, Pantalla.PAUSA)
 
+    def test_estadio_cicla_cesped_momento_diseno_y_gradas(self) -> None:
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Opciones
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        for _ in range(5):
+            self.menus.procesar_tecla(pygame.K_DOWN)  # Estadio
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        self.assertIs(self.menus.pantalla, Pantalla.ESTADIO)
+
+        self.menus.procesar_tecla(pygame.K_RETURN)  # Césped
+        self.assertIs(self.menus.estadio_seleccionado.cesped, Cesped.OSCURO)
+
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Momento
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        self.assertIs(self.menus.estadio_seleccionado.momento, Momento.NOCHE)
+
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Diseño
+        self.menus.procesar_tecla(pygame.K_RIGHT)
+        self.assertIs(self.menus.estadio_seleccionado.diseno, Diseno.RAYAS)
+
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Gradas
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        self.assertFalse(self.menus.estadio_seleccionado.gradas)
+
+        etiquetas = {
+            boton.accion: boton.etiqueta
+            for boton in self.menus.botones[Pantalla.ESTADIO]
+        }
+        self.assertEqual(etiquetas[Accion.CESPED], "Césped: OSCURO")
+        self.assertEqual(etiquetas[Accion.MOMENTO], "Momento: NOCHE")
+        self.assertEqual(etiquetas[Accion.DISENO], "Diseño: RAYAS")
+        self.assertEqual(etiquetas[Accion.GRADAS], "Gradas: SIN AFICIONADOS")
+
+        self.menus.procesar_tecla(pygame.K_ESCAPE)
+        self.assertIs(self.menus.pantalla, Pantalla.OPCIONES)
+
     def test_ayuda_muestra_los_controles_y_vuelve(self) -> None:
         self.menus.procesar_tecla(pygame.K_DOWN)
         self.menus.procesar_tecla(pygame.K_DOWN)
@@ -314,6 +351,7 @@ class MenusTests(unittest.TestCase):
             Pantalla.UNIFORME,
             Pantalla.EDITOR,
             Pantalla.TACTICA,
+            Pantalla.ESTADIO,
             Pantalla.AYUDA,
             Pantalla.PAUSA,
         ):

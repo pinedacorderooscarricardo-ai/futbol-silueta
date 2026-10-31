@@ -34,12 +34,19 @@ from .configuracion import (
     TEXTO_ENTRETIEMPO,
     TEXTO_FINAL,
     TEXTO_SALTAR_REPETICION,
-    VERDE,
     VERDE_ENERGIA,
     Color,
 )
 
 from .escudos import Escudo, cargar_escudo
+from .estadios import (
+    ESTADIO_POR_DEFECTO,
+    Estadio,
+    color_entorno,
+    color_tribuna,
+    dibujar_aficionados,
+    dibujar_cesped,
+)
 from .niveles import nivel_por_numero
 
 if TYPE_CHECKING:
@@ -73,7 +80,8 @@ class Vista:
         self.fuente_tiempo = pygame.font.SysFont("Arial", 20, bold=True)
 
         # Elementos estáticos: se crean una vez y solo se copian.
-        self.fondo = self._crear_fondo()
+        self._estadio_fondo: Estadio = ESTADIO_POR_DEFECTO
+        self.fondo = self._crear_fondo(self._estadio_fondo)
         self.hud = self.fuente_hud.render(TEXTO_AYUDA, True, BLANCO)
         self.mensajes_gol = {
             equipo: self.fuente_mensaje.render(texto, True, AMARILLO)
@@ -146,12 +154,18 @@ class Vista:
     # --------------------------------------------------
 
     def dibujar(self, juego: Juego) -> None:
+        if juego.estadio != self._estadio_fondo:
+            # Estadio distinto: se pre-renderiza una vez y se conserva.
+            self._estadio_fondo = juego.estadio
+            self.fondo = self._crear_fondo(juego.estadio)
+
         self.pantalla.blit(self.fondo, (0, 0))
         self._dibujar_objetivo_pase(juego)
 
         for jugador in juego.jugadores:
             jugador.dibujar(self.pantalla)
 
+        self._dibujar_lances(juego)
         juego.balon.dibujar(self.pantalla)
         self._dibujar_jugador_controlado(juego)
         self._dibujar_escudo(juego)
@@ -227,10 +241,20 @@ class Vista:
     # Piezas pre-renderizadas y cachés
     # --------------------------------------------------
 
-    def _crear_fondo(self) -> pygame.Surface:
-        """Pre-renderiza el campo, que no cambia entre fotogramas."""
+    def _crear_fondo(self, estadio: Estadio) -> pygame.Surface:
+        """Pre-renderiza el estadio: entorno, cancha y líneas."""
         fondo = pygame.Surface((ANCHO, ALTO)).convert()
-        fondo.fill(VERDE)
+
+        if estadio.gradas:
+            # Graderío con público; la cancha se estampa encima.
+            fondo.fill(color_tribuna(estadio.momento))
+            dibujar_aficionados(fondo, estadio.momento)
+        else:
+            fondo.fill(color_entorno(estadio))
+
+        cancha = pygame.Surface(CAMPO_RECT.size)
+        dibujar_cesped(cancha, estadio)
+        fondo.blit(cancha, CAMPO_RECT.topleft)
 
         pygame.draw.rect(fondo, BLANCO, CAMPO_RECT, 3)
 
@@ -520,6 +544,20 @@ class Vista:
             return
 
         juego.escudo.dibujar(self.pantalla, control.rect.center)
+
+    def _dibujar_lances(self, juego: Juego) -> None:
+        """Aro blanco alrededor del portero mientras dura su lance."""
+        for portero in juego.porteros:
+            if portero.lance_restante <= 0.0:
+                continue
+
+            pygame.draw.circle(
+                self.pantalla,
+                BLANCO,
+                portero.rect.center,
+                portero.RADIO + 7,
+                2,
+            )
 
     def _dibujar_objetivo_pase(self, juego: Juego) -> None:
         """Aro cian sobre el compañero al que iría el próximo pase."""

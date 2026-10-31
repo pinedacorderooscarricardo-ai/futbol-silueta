@@ -40,6 +40,8 @@ from .configuracion import (
     PORTERIA_CENTRO,
     PORTERIA_INFERIOR,
     PORTERIA_SUPERIOR,
+    PORTERO_CENTRADO_TOLERANCIA,
+    RADIO_ATAJADA,
     RADIO_BALON,
     RECARGA_ENERGIA,
     REPETICION_SEGUNDOS,
@@ -57,8 +59,10 @@ from .entidades import (
     elegir_delantero_controlado,
 )
 from .escudos import FormaEscudo, Escudo
+from .estadios import ESTADIO_POR_DEFECTO, Estadio
 from .niveles import NIVEL_MAXIMO, Nivel, nivel_por_numero
 from .plantilla import JugadorPlantilla, plantillas_por_defecto
+from .porteros import PORTERO_LOCAL, PorteroInteligente, calidad_rival
 from .repeticion import Instante, aplicar_instante, capturar_instante
 from .uniformes import UNIFORMES_POR_DEFECTO, Uniforme
 from .utilidades import acotar, acotar_posicion, equipo_rival
@@ -98,6 +102,9 @@ class Juego:
             UNIFORMES_POR_DEFECTO
         )
         self.mostrar_numeros = True
+
+        # Estadio elegido: césped, momento, gradas y diseño de cancha.
+        self.estadio = ESTADIO_POR_DEFECTO
 
         # Fichas editables de los 22 jugadores (nombres, dorsales,
         # atributos y posiciones).
@@ -186,6 +193,10 @@ class Juego:
         self.uniformes = dict(uniformes)
         self.mostrar_numeros = mostrar_numeros
 
+    def personalizar_estadio(self, estadio: Estadio) -> None:
+        """Aplica el estadio elegido; la vista redibuja el fondo al pintar."""
+        self.estadio = estadio
+
     def personalizar_plantillas(
         self,
         plantillas: dict[Equipo, tuple[JugadorPlantilla, ...]],
@@ -238,6 +249,20 @@ class Juego:
             for jugador in self.jugadores
             if jugador.rol is Rol.PORTERO
         )
+
+        # Porteros inteligentes: uno por portero, con la calidad del
+        # nivel para el rival y la fija para el local.
+        self.porteros_ia: dict[Jugador, PorteroInteligente] = {
+            portero: PorteroInteligente(
+                portero,
+                (
+                    PORTERO_LOCAL
+                    if portero.equipo is Equipo.LOCAL
+                    else calidad_rival(self.nivel)
+                ),
+            )
+            for portero in self.porteros
+        }
 
         self.portador = None
         self.liberador = None
@@ -450,28 +475,39 @@ class Juego:
     # --------------------------------------------------
 
     def _intentar_atajada(self) -> bool:
-        """Atrapa un balón rápido que llega a la zona del portero."""
+        """Atrapa un balón rápido que llega a la zona del portero.
+
+        Cada portero usa su propio alcance: el rival, el del nivel, y el
+        local, el base. Durante un lance las manos llegan más lejos,
+        pero si el portero falló el disparo (lo decide su calidad) el
+        balón se le escapa entre las manos.
+        """
         if (
             self.balon.vel.length_squared()
             < VELOCIDAD_MINIMA_ATAJADA**2
         ):
             return False
 
-        radio_atajada2 = (
-            self.nivel_actual.parametros.radio_atajada_rival**2
+        radio_rival = (
+            self.nivel_actual.parametros.radio_atajada_rival
         )
 
         # Solo los dos porteros, ya filtrados: se consulta en cada
         # subpaso del balón, no hace falta recorrer a los 22 jugadores.
         for portero in self.porteros:
-            if (
-                portero.pos.distance_squared_to(self.balon.pos)
-                > radio_atajada2
-            ):
+            portero_ia = self.porteros_ia[portero]
+            base = radio_rival if portero.equipo is Equipo.VISITANTE else RADIO_ATAJADA
+
+            if portero.pos.distance_squared_to(
+                self.balon.pos
+            ) > portero_ia.radio_atajada(base) ** 2:
                 continue
 
             hacia_el_arco = -1.0 if portero.equipo is Equipo.LOCAL else 1.0
             if self.balon.vel.x * hacia_el_arco <= 0.0:
+                continue
+
+            if not portero_ia.puede_atrapar():
                 continue
 
             # Mira hacia el campo para que el balón quede delante suyo.
@@ -539,13 +575,26 @@ class Juego:
         ):
             self._accion_portador_ia(self.portador, dt)
 
-        # El resto de los 21 jugadores (menos el humano controlado).
+        # Porteros inteligentes: anticipan, cubren el ángulo y se
+        # lanzan. El portador y el portero controlado por el humano no
+        # los mueve la IA.
+        for portero in self.porteros:
+            if portero is self.portador:
+                continue
+            if portero is self.jugador_controlado:
+                continue
+
+            self.porteros_ia[portero].actualizar(self, dt)
+
+        # El resto de los jugadores de campo (menos el humano controlado).
         velocidad_ia = parametros.velocidad_ia
         equipo_con_balon = self._equipo_con_balon
         perseguidores = self._perseguidores
         marcajes = self._marcajes
 
         for jugador in self.jugadores:
+            if jugador.rol is Rol.PORTERO:
+                continue
             if jugador is self.portador:
                 continue
             if jugador is self.jugador_controlado:
@@ -747,7 +796,8 @@ class Juego:
 
         if (
             portero is None
-            or abs(portero.pos.y - PORTERIA_CENTRO) < 12.0
+            or abs(portero.pos.y - PORTERIA_CENTRO)
+            < PORTERO_CENTRADO_TOLERANCIA
         ):
             # Portero centrado: buscar el palo más lejano al tirador.
             lado = 1.0 if jugador.pos.y <= PORTERIA_CENTRO else -1.0
@@ -775,10 +825,7 @@ class Juego:
         persigue: bool,
         marcado: Jugador | None = None,
     ) -> pygame.Vector2:
-        """Punto al que un jugador IA quiere moverse este frame."""
-        if jugador.rol is Rol.PORTERO:
-            return self._objetivo_portero(jugador)
-
+        """Punto al que un jugador de campo IA quiere moverse este frame."""
         base = jugador.posicion_base
         ataca = equipo_con_balon is jugador.equipo
 
@@ -802,17 +849,6 @@ class Juego:
 
         acotar_posicion(objetivo, jugador.RADIO)
         return objetivo
-
-    def _objetivo_portero(self, jugador: Jugador) -> pygame.Vector2:
-        """El portero se desplaza lateralmente siguiendo la Y del balón."""
-        signo = 1 if jugador.equipo is Equipo.LOCAL else -1
-        x = jugador.posicion_base.x + signo * 5
-        y = acotar(
-            self.balon.pos.y,
-            PORTERIA_SUPERIOR - 20,
-            PORTERIA_INFERIOR + 20,
-        )
-        return pygame.Vector2(x, y)
 
     # --------------------------------------------------
     # Colisiones
@@ -932,6 +968,41 @@ class Juego:
 
         self._chutar(control.direccion, control)
 
+    def _cambiar_jugador(self) -> None:
+        """Cambia el control al siguiente local por cercanía al balón.
+
+        Cada pulsación entrega el mando al siguiente jugador de campo
+        local más cercano al balón: la primera ya controla al más
+        conveniente y las siguientes recorren al resto. Con posesión
+        local el control acompaña a quien lleva el balón y no cambia.
+        """
+        if self.portador is not None and self.portador.equipo is Equipo.LOCAL:
+            return
+
+        ordenados = sorted(
+            (
+                jugador
+                for jugador in self.jugadores
+                if jugador.equipo is Equipo.LOCAL
+                and jugador.rol is not Rol.PORTERO
+            ),
+            key=lambda jugador: jugador.pos.distance_squared_to(
+                self.balon.pos
+            ),
+        )
+
+        if not ordenados:
+            return
+
+        if self.jugador_controlado in ordenados:
+            indice = ordenados.index(self.jugador_controlado)
+            self.jugador_controlado = ordenados[
+                (indice + 1) % len(ordenados)
+            ]
+        else:
+            # El control estaba en el portero: pasa al más cercano.
+            self.jugador_controlado = ordenados[0]
+
     # --------------------------------------------------
     # Goles, eventos y bucle principal
     # --------------------------------------------------
@@ -1041,6 +1112,8 @@ class Juego:
             self._al_pulsar_espacio()
         elif tecla == pygame.K_e and self.estado is Estado.JUGANDO:
             self.pasar_al_companero_mas_cercano()
+        elif tecla == pygame.K_q and self.estado is Estado.JUGANDO:
+            self._cambiar_jugador()
 
     def _al_pulsar_espacio(self) -> None:
         """ESPACIO: chutar, pasar de la celebración a la repetición,

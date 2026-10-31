@@ -175,24 +175,34 @@ class Aplicacion:
             superficie.get_rect(topright=(ANCHO - 10, 10)),
         )
 
+    def _aplicar_preferencias(self) -> None:
+        """Lleva al juego la personalización elegida en los menús.
+
+        Se usa al empezar o reiniciar una partida: escudo, uniformes,
+        estadio, plantillas del editor y la táctica elegida (sin
+        recolocar, porque el partido se reinicia de todos modos).
+        """
+        color, color_borde, forma = self.menus.escudo_seleccionado
+        self.juego.personalizar_escudo(color, color_borde, forma)
+        self.juego.personalizar_uniformes(
+            self.menus.uniformes_seleccionados,
+            self.menus.numeros_activados,
+        )
+        self.juego.personalizar_estadio(self.menus.estadio_seleccionado)
+        self.juego.personalizar_plantillas(
+            self.menus.plantillas_seleccionadas
+        )
+        self.juego.cambiar_formacion(
+            self.menus.formacion_nombre,
+            recolocar=False,
+        )
+
     def _ejecutar_accion_pendiente(self) -> None:
         self.juego.sonidos.habilitado = self.menus.sonido_activado
         accion = self.menus.consumir_accion()
 
         if accion in (Accion.JUGAR, Accion.REINICIAR):
-            color, color_borde, forma = self.menus.escudo_seleccionado
-            self.juego.personalizar_escudo(color, color_borde, forma)
-            self.juego.personalizar_uniformes(
-                self.menus.uniformes_seleccionados,
-                self.menus.numeros_activados,
-            )
-            self.juego.personalizar_plantillas(
-                self.menus.plantillas_seleccionadas
-            )
-            self.juego.cambiar_formacion(
-                self.menus.formacion_nombre,
-                recolocar=False,
-            )
+            self._aplicar_preferencias()
             self.juego.nueva_partida()
             self.guardado.guardar_desde(self.menus)
         elif accion is Accion.FORMACION:

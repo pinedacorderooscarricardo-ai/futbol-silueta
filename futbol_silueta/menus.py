@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
@@ -20,6 +19,20 @@ from .configuracion import (
     Rol,
 )
 from .escudos import ESCUDO_PRESETS, FORMAS_ESCUDO, Escudo, FormaEscudo
+from .estadios import (
+    CESPEDES,
+    DISENOS,
+    ESTADIO_POR_DEFECTO,
+    MOMENTOS,
+    NOMBRES_DISENO,
+    NOMBRES_MOMENTO,
+    Estadio,
+    color_entorno,
+    color_tribuna,
+    dibujar_aficionados,
+    dibujar_cesped,
+    siguiente_opcion,
+)
 from .plantilla import (
     LARGO_NOMBRE,
     PRESETS_FUERZA,
@@ -37,23 +50,12 @@ from .uniformes import (
     Uniforme,
     dibujar_jugador_uniforme,
 )
-from .utilidades import acotar, equipo_rival
-
-
-def _directorio_imagenes() -> Path:
-    """Ubica las imágenes en el código fuente y dentro del ejecutable."""
-    if getattr(sys, "frozen", False):
-        base = getattr(sys, "_MEIPASS", None)
-
-        if base is None:
-            base = Path(sys.executable).resolve().parent
-
-        return Path(base) / "imagenes"
-
-    return Path(__file__).resolve().parent.parent / "imagenes"
-
-
-DIRECTORIO_IMAGENES = _directorio_imagenes()
+from .utilidades import (
+    DIRECTORIO_IMAGENES,
+    acotar,
+    cargar_imagen,
+    equipo_rival,
+)
 
 
 class Pantalla(StrEnum):
@@ -68,6 +70,7 @@ class Pantalla(StrEnum):
     UNIFORME = "uniforme"
     EDITOR = "editor"
     TACTICA = "tactica"
+    ESTADIO = "estadio"
 
 
 class Accion(StrEnum):
@@ -100,6 +103,11 @@ class Accion(StrEnum):
     CICLAR_FUERZA = "ciclar_fuerza"
     CICLAR_ROL = "ciclar_rol"
     MOVER_POSICION = "mover_posicion"
+    ESTADIO = "estadio"
+    CESPED = "cesped"
+    MOMENTO = "momento"
+    DISENO = "diseno"
+    GRADAS = "gradas"
 
 
 class Boton:
@@ -127,7 +135,7 @@ class FondoImagen:
     """
 
     def __init__(self, ruta: Path) -> None:
-        original = pygame.image.load(ruta).convert()
+        original = cargar_imagen(ruta)
         ancho, alto = original.get_size()
 
         self.escala = max(ANCHO / ancho, ALTO / alto)
@@ -231,32 +239,37 @@ class Menus:
             ),
             Pantalla.OPCIONES: [
                 Boton(
-                    pygame.Rect(260, 334, 480, 42),
+                    pygame.Rect(260, 334, 480, 36),
                     "Sonido: ACTIVADO",
                     Accion.SONIDO,
                 ),
                 Boton(
-                    pygame.Rect(260, 378, 480, 42),
+                    pygame.Rect(260, 372, 480, 36),
                     "Tácticas",
                     Accion.TACTICA,
                 ),
                 Boton(
-                    pygame.Rect(260, 422, 480, 42),
+                    pygame.Rect(260, 410, 480, 36),
                     "Uniformes",
                     Accion.UNIFORME,
                 ),
                 Boton(
-                    pygame.Rect(260, 466, 480, 42),
+                    pygame.Rect(260, 448, 480, 36),
                     "Personalizar escudo",
                     Accion.ESCUDO,
                 ),
                 Boton(
-                    pygame.Rect(260, 510, 480, 42),
+                    pygame.Rect(260, 486, 480, 36),
                     "Editor de jugadores",
                     Accion.EDITOR,
                 ),
                 Boton(
-                    pygame.Rect(260, 554, 480, 42),
+                    pygame.Rect(260, 524, 480, 36),
+                    "Estadio",
+                    Accion.ESTADIO,
+                ),
+                Boton(
+                    pygame.Rect(260, 562, 480, 36),
                     "Volver",
                     Accion.VOLVER,
                 ),
@@ -265,6 +278,7 @@ class Menus:
             Pantalla.UNIFORME: self._botones_de_uniforme(),
             Pantalla.EDITOR: self._botones_de_editor(),
             Pantalla.TACTICA: self._botones_de_tactica(),
+            Pantalla.ESTADIO: self._botones_de_estadio(),
             Pantalla.AYUDA: [
                 Boton(
                     pygame.Rect(380, 468, 240, 52),
@@ -349,6 +363,14 @@ class Menus:
             self.ACENTO_PANEL,
         )
         self.rect_campo_tactica = pygame.Rect(600, 220, 230, 330)
+
+        # Estadio: césped, momento, gradas y diseño de la cancha.
+        self._estadio = ESTADIO_POR_DEFECTO
+        self.rect_panel_estadio = pygame.Rect(150, 90, 700, 520)
+        self._panel_estadio = self._crear_panel(
+            self.rect_panel_estadio,
+            self.ACENTO_PANEL,
+        )
 
     # --------------------------------------------------
     # Construcción
@@ -476,6 +498,37 @@ class Menus:
         ]
 
     @staticmethod
+    def _botones_de_estadio() -> list[Boton]:
+        """Botones del estadio: césped, momento, diseño, gradas y volver."""
+        return [
+            Boton(
+                pygame.Rect(190, 220, 370, 44),
+                "Césped: CLARO",
+                Accion.CESPED,
+            ),
+            Boton(
+                pygame.Rect(190, 272, 370, 44),
+                "Momento: DÍA",
+                Accion.MOMENTO,
+            ),
+            Boton(
+                pygame.Rect(190, 324, 370, 44),
+                "Diseño: CLÁSICO",
+                Accion.DISENO,
+            ),
+            Boton(
+                pygame.Rect(190, 376, 370, 44),
+                "Gradas: CON AFICIONADOS",
+                Accion.GRADAS,
+            ),
+            Boton(
+                pygame.Rect(190, 535, 370, 44),
+                "Volver",
+                Accion.VOLVER,
+            ),
+        ]
+
+    @staticmethod
     def _crear_panel(
         rect: pygame.Rect,
         borde: Color,
@@ -537,6 +590,16 @@ class Menus:
             equipo: tuple(fichas)
             for equipo, fichas in self.plantillas_editables.items()
         }
+
+    @property
+    def estadio_seleccionado(self) -> Estadio:
+        """Estadio elegido: césped, momento, gradas y diseño."""
+        return self._estadio
+
+    def adoptar_estadio(self, estadio: Estadio) -> None:
+        """Reemplaza el estadio en uso y refresca sus etiquetas."""
+        self._estadio = estadio
+        self._actualizar_etiquetas_estadio()
 
     def consumir_accion(self) -> Accion | None:
         """Devuelve y borra la acción que debe ejecutar la aplicación."""
@@ -644,11 +707,14 @@ class Menus:
     # adelante; el resto de botones ignora las flechas laterales.
     _AJUSTABLES: frozenset[Accion] = frozenset(
         (
+            Accion.CESPED,
             Accion.CICLAR_DORSAL,
             Accion.CICLAR_FUERZA,
             Accion.CICLAR_JUGADOR,
             Accion.CICLAR_ROL,
             Accion.CICLAR_VELOCIDAD,
+            Accion.DISENO,
+            Accion.MOMENTO,
             Accion.PRENDA,
         )
     )
@@ -690,6 +756,7 @@ class Menus:
             Pantalla.UNIFORME,
             Pantalla.EDITOR,
             Pantalla.TACTICA,
+            Pantalla.ESTADIO,
         ):
             self._retroceder()
 
@@ -704,9 +771,9 @@ class Menus:
         if (
             accion is Accion.ESCUDO
             and boton is not None
-            and boton.valor is not None
+            and isinstance(boton.valor, int)
         ):
-            indice = int(boton.valor)
+            indice = boton.valor % len(ESCUDO_PRESETS)
             _etiqueta, color, color_borde = ESCUDO_PRESETS[indice]
             self.escudo_color = color
             self.escudo_color_borde = color_borde
@@ -715,17 +782,21 @@ class Menus:
         if (
             accion is Accion.FORMA_ESCUDO
             and boton is not None
-            and boton.valor is not None
+            and isinstance(boton.valor, int)
         ):
-            self.escudo_forma = FORMAS_ESCUDO[int(boton.valor)]
+            self.escudo_forma = FORMAS_ESCUDO[
+                boton.valor % len(FORMAS_ESCUDO)
+            ]
             return
 
         if (
             accion is Accion.FORMACION
             and boton is not None
-            and boton.valor is not None
+            and isinstance(boton.valor, int)
         ):
-            self._elegir_formacion(NOMBRES_FORMACION[int(boton.valor)])
+            self._elegir_formacion(
+                NOMBRES_FORMACION[boton.valor % len(NOMBRES_FORMACION)]
+            )
             return
 
         if (
@@ -768,6 +839,8 @@ class Menus:
             self._navegar(Pantalla.EDITOR)
         elif accion is Accion.TACTICA:
             self._navegar(Pantalla.TACTICA)
+        elif accion is Accion.ESTADIO:
+            self._navegar(Pantalla.ESTADIO)
         elif accion is Accion.EQUIPO_EDITOR:
             self._equipo_editor = equipo_rival(self._equipo_editor)
             self._jugador_editor %= len(
@@ -818,6 +891,22 @@ class Menus:
             if self._moviendo_posicion:
                 self._editando_nombre = False
 
+        elif accion is Accion.CESPED:
+            self._estadio = self._estadio._replace(
+                cesped=siguiente_opcion(CESPEDES, self._estadio.cesped)
+            )
+        elif accion is Accion.MOMENTO:
+            self._estadio = self._estadio._replace(
+                momento=siguiente_opcion(MOMENTOS, self._estadio.momento)
+            )
+        elif accion is Accion.DISENO:
+            self._estadio = self._estadio._replace(
+                diseno=siguiente_opcion(DISENOS, self._estadio.diseno)
+            )
+        elif accion is Accion.GRADAS:
+            self._estadio = self._estadio._replace(
+                gradas=not self._estadio.gradas
+            )
         elif accion is Accion.VOLVER:
             self._retroceder()
         elif accion is Accion.SALIR:
@@ -826,6 +915,7 @@ class Menus:
             self._navegar(Pantalla.ESCUDO)
 
         self._actualizar_etiquetas_editor()
+        self._actualizar_etiquetas_estadio()
 
     def _actualizar_etiqueta_sonido(self) -> None:
         estado = "ACTIVADO" if self.sonido_activado else "DESACTIVADO"
@@ -1074,6 +1164,25 @@ class Menus:
                     else "Posición: ajustar"
                 )
 
+    def _actualizar_etiquetas_estadio(self) -> None:
+        """Refresca las etiquetas de la pantalla del estadio."""
+        estadio = self._estadio
+
+        for boton in self.botones[Pantalla.ESTADIO]:
+            if boton.accion is Accion.CESPED:
+                boton.etiqueta = f"Césped: {estadio.cesped.value.upper()}"
+            elif boton.accion is Accion.MOMENTO:
+                boton.etiqueta = f"Momento: {NOMBRES_MOMENTO[estadio.momento]}"
+            elif boton.accion is Accion.DISENO:
+                boton.etiqueta = f"Diseño: {NOMBRES_DISENO[estadio.diseno]}"
+            elif boton.accion is Accion.GRADAS:
+                estado = (
+                    "CON AFICIONADOS"
+                    if estadio.gradas
+                    else "SIN AFICIONADOS"
+                )
+                boton.etiqueta = f"Gradas: {estado}"
+
     def _cursor_mano(self, activo: bool) -> None:
         try:
             pygame.mouse.set_cursor(
@@ -1166,6 +1275,14 @@ class Menus:
                 self.rect_panel_tactica.topleft,
             )
             self._dibujar_tactica(pantalla)
+        elif self.pantalla is Pantalla.ESTADIO:
+            self.fondo_opciones.dibujar(pantalla)
+            pantalla.blit(self._velo, (0, 0))
+            pantalla.blit(
+                self._panel_estadio,
+                self.rect_panel_estadio.topleft,
+            )
+            self._dibujar_estadio(pantalla)
 
     def _dibujar_botones_imagen(
         self,
@@ -1586,6 +1703,75 @@ class Menus:
                 1,
                 border_radius=12,
             )
+
+    def _dibujar_estadio(self, pantalla: pygame.Surface) -> None:
+        """Dibuja el panel de personalización del estadio."""
+        self._centrar(
+            pantalla,
+            "ESTADIO",
+            150,
+            self.fuente_titulo,
+            BLANCO,
+        )
+        self._centrar(
+            pantalla,
+            "Césped, momento, gradas y diseño de la cancha",
+            192,
+            self.fuente_texto,
+            self.TEXTO_SUAVE,
+        )
+        self._dibujar_botones_panel(
+            pantalla,
+            Pantalla.ESTADIO,
+            self.ACENTO_PANEL,
+        )
+        self._dibujar_vista_previa_estadio(pantalla)
+        self._centrar(
+            pantalla,
+            "←/→ ajusta la opción | ENTER: aceptar | ESC: volver",
+            598,
+            self.fuente_pequena,
+            (150, 170, 190),
+        )
+
+    def _dibujar_vista_previa_estadio(
+        self,
+        pantalla: pygame.Surface,
+    ) -> None:
+        """Miniatura del estadio con la personalización en vivo."""
+        mini = pygame.Surface((280, 200))
+        self._dibujar_estadio_mini(mini)
+        pantalla.blit(mini, mini.get_rect(center=(700, 330)))
+        self._centrar_en(
+            pantalla,
+            "Así se ve tu cancha",
+            700,
+            448,
+            self.fuente_pequena,
+            self.TEXTO_SUAVE,
+        )
+
+    def _dibujar_estadio_mini(self, mini: pygame.Surface) -> None:
+        """Estadio en miniatura: entorno, aficionados y cancha."""
+        estadio = self._estadio
+
+        if estadio.gradas:
+            mini.fill(color_tribuna(estadio.momento))
+            dibujar_aficionados(mini, estadio.momento)
+        else:
+            mini.fill(color_entorno(estadio))
+
+        campo = pygame.Rect(
+            (0, 0),
+            (mini.get_width() - 40, mini.get_height() - 40),
+        )
+        campo.center = mini.get_rect().center
+        cancha = pygame.Surface(campo.size)
+        dibujar_cesped(cancha, estadio)
+        mini.blit(cancha, campo.topleft)
+        pygame.draw.rect(mini, BLANCO, campo, 1)
+        pygame.draw.line(mini, BLANCO, campo.midleft, campo.midright, 1)
+        pygame.draw.circle(mini, BLANCO, campo.center, 22, 1)
 
     def _dibujar_ayuda(self, pantalla: pygame.Surface) -> None:
         self._centrar(
