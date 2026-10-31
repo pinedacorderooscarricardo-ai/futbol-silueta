@@ -21,8 +21,10 @@ from futbol_silueta.configuracion import (
     ALTO,
     ANCHO,
     CAMPO_RECT,
+    DURACION_GOL,
     PORTERIA_CENTRO,
     PRESORES_POR_EQUIPO,
+    RADIO_BALON,
     VELOCIDAD_IA,
     Equipo,
     Estado,
@@ -30,6 +32,8 @@ from futbol_silueta.configuracion import (
 )
 from futbol_silueta.juego import Juego
 from futbol_silueta.niveles import parametros_de_nivel
+from futbol_silueta.plantilla import aplicar_formacion
+from futbol_silueta.repeticion import aplicar_instante, capturar_instante
 from futbol_silueta.vista import Vista
 
 
@@ -56,6 +60,113 @@ class JuegoTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.juego = Juego(self.vista)
+
+    def _gol_con_jugada_previa(self) -> None:
+        """Da posesión, graba unos fotogramas y marca un gol.
+
+        Deja el partido en ``Estado.GOL`` con una repetición congelada.
+        """
+        juego = self.juego
+        control = juego.jugador_controlado
+        assert control is not None
+
+        juego.dar_posesion(control)
+
+        for _ in range(30):
+            juego.actualizar(1.0 / 60.0)
+
+        control.pos.update(CAMPO_RECT.right - 20, PORTERIA_CENTRO)
+        control.actualizar_rect()
+        control.direccion.update(1, 0)
+        juego.actualizar_balon(1.0 / 60.0)
+
+    def test_el_gol_deja_una_repeticion_grabada(self) -> None:
+        self._gol_con_jugada_previa()
+
+        juego = self.juego
+        self.assertIs(juego.estado, Estado.GOL)
+        self.assertTrue(juego.repeticion)
+
+        # El último fotograma muestra el balón llegando a la red: el
+        # gol se detecta con el balón a menos de su radio de la línea.
+        repeticion = juego.repeticion
+        assert repeticion is not None
+        ultimo = repeticion[-1]
+        self.assertGreater(ultimo.balon_x, repeticion[0].balon_x)
+        self.assertGreaterEqual(
+            ultimo.balon_x,
+            CAMPO_RECT.right - RADIO_BALON,
+        )
+
+    def test_capturar_y_aplicar_un_instante(self) -> None:
+        juego = self.juego
+        instante = capturar_instante(juego)
+
+        jugador = juego.jugadores[0]
+        jugador.pos.update(123.0, 45.0)
+        jugador.tiene_balon = True
+        jugador.actualizar_rect()
+        juego.balon.pos.update(500.0, 300.0)
+
+        aplicar_instante(juego, instante)
+
+        x, y, tiene_balon = instante.jugadores[0]
+        self.assertEqual((jugador.pos.x, jugador.pos.y), (x, y))
+        self.assertEqual(jugador.rect.center, (round(x), round(y)))
+        self.assertFalse(jugador.tiene_balon)
+        self.assertEqual(
+            (juego.balon.pos.x, juego.balon.pos.y),
+            (instante.balon_x, instante.balon_y),
+        )
+
+    def test_la_repeticion_arranca_tras_la_celebracion(self) -> None:
+        self._gol_con_jugada_previa()
+
+        juego = self.juego
+        juego.tiempo_gol -= DURACION_GOL
+        juego.actualizar(1.0 / 60.0)
+
+        self.assertIs(juego.estado, Estado.REPETICION)
+
+        juego.actualizar(1.0 / 60.0)
+        self.assertGreater(juego._indice_repeticion, 0.0)
+
+    def test_espacio_salta_la_repeticion(self) -> None:
+        self._gol_con_jugada_previa()
+        juego = self.juego
+        juego.tiempo_gol -= DURACION_GOL
+        juego.actualizar(1.0 / 60.0)
+        self.assertIs(juego.estado, Estado.REPETICION)
+
+        juego.procesar_tecla(pygame.K_SPACE)
+
+        self.assertIs(juego.estado, Estado.JUGANDO)
+
+    def test_la_repeticion_termina_en_el_saque(self) -> None:
+        self._gol_con_jugada_previa()
+        juego = self.juego
+        juego.tiempo_gol -= DURACION_GOL
+        juego.actualizar(1.0 / 60.0)
+        self.assertIs(juego.estado, Estado.REPETICION)
+
+        for _ in range(1000):
+            juego.actualizar(1.0 / 60.0)
+
+            if juego.estado is Estado.JUGANDO:
+                break
+
+        self.assertIs(juego.estado, Estado.JUGANDO)
+        self.assertIsNone(juego.repeticion)
+
+    def test_gol_sin_grabacion_reinicia_sin_repeticion(self) -> None:
+        juego = self.juego
+        juego.estado = Estado.GOL
+        juego.repeticion = None
+        juego.tiempo_gol = pygame.time.get_ticks() - DURACION_GOL
+
+        juego.actualizar(1.0 / 60.0)
+
+        self.assertIs(juego.estado, Estado.JUGANDO)
 
     def test_jugador_inicial_es_delantero_local(self) -> None:
         control = self.juego.jugador_controlado
@@ -239,6 +350,36 @@ class JuegoTests(unittest.TestCase):
 
         self.assertEqual(self.juego.escudo.color, (10, 20, 30))
         self.assertEqual(self.juego.escudo.color_borde, (40, 50, 60))
+
+    def test_cambiar_formacion_recoloca_a_los_jugadores(self) -> None:
+        # Como hace el menú de tácticas: primero recoloca las fichas.
+        plantillas = {
+            equipo: aplicar_formacion(self.juego.plantillas[equipo], "3-5-2")
+            for equipo in Equipo
+        }
+        self.juego.personalizar_plantillas(plantillas)
+        self.juego.cambiar_formacion("3-5-2")
+
+        self.assertEqual(self.juego.formacion_nombre, "3-5-2")
+        self.assertEqual(len(self.juego.porteros), 2)
+
+        for equipo in (Equipo.LOCAL, Equipo.VISITANTE):
+            roles = [
+                jugador.rol
+                for jugador in self.juego.jugadores
+                if jugador.equipo is equipo
+            ]
+
+            self.assertEqual(len(roles), 11)
+            self.assertEqual(roles.count(Rol.PORTERO), 1)
+            self.assertEqual(roles.count(Rol.DEFENSA), 3)
+            self.assertEqual(roles.count(Rol.MEDIO), 5)
+            self.assertEqual(roles.count(Rol.DELANTERO), 2)
+
+    def test_la_formacion_desconocida_vuelve_a_la_442(self) -> None:
+        self.juego.cambiar_formacion("1-9-1", recolocar=False)
+
+        self.assertEqual(self.juego.formacion_nombre, "4-4-2")
 
 
 if __name__ == "__main__":

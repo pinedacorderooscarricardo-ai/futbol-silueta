@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pygame
 
-from futbol_silueta.configuracion import ALTO, ANCHO
+from futbol_silueta.configuracion import ALTO, ANCHO, Equipo, Rol
 from futbol_silueta.escudos import ESCUDO_PRESETS, FORMAS_ESCUDO
 from futbol_silueta.menus import Accion, Menus, Pantalla
 
@@ -161,6 +161,12 @@ class MenusTests(unittest.TestCase):
             "Sonido: DESACTIVADO",
         )
 
+        # "Volver" es el sexto botón de Opciones, tras Tácticas,
+        # Uniformes, escudo y el editor de jugadores.
+        self.menus.procesar_tecla(pygame.K_DOWN)
+        self.menus.procesar_tecla(pygame.K_DOWN)
+        self.menus.procesar_tecla(pygame.K_DOWN)
+        self.menus.procesar_tecla(pygame.K_DOWN)
         self.menus.procesar_tecla(pygame.K_DOWN)
         self.menus.procesar_tecla(pygame.K_RETURN)
         self.assertIs(self.menus.pantalla, Pantalla.PRINCIPAL)
@@ -175,6 +181,9 @@ class MenusTests(unittest.TestCase):
         self.menus.procesar_tecla(pygame.K_RETURN)
         self.assertIs(self.menus.pantalla, Pantalla.OPCIONES)
 
+        # El escudo es el cuarto botón de Opciones, tras Tácticas y
+        # Uniformes.
+        self.menus.procesar_tecla(pygame.K_DOWN)
         self.menus.procesar_tecla(pygame.K_DOWN)
         self.menus.procesar_tecla(pygame.K_DOWN)
         self.menus.procesar_tecla(pygame.K_RETURN)
@@ -199,6 +208,60 @@ class MenusTests(unittest.TestCase):
 
         self.menus.procesar_tecla(pygame.K_ESCAPE)
         self.assertIs(self.menus.pantalla, Pantalla.OPCIONES)
+
+    def test_tacticas_aplica_una_formacion_a_las_fichas(self) -> None:
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Opciones
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Tácticas
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        self.assertIs(self.menus.pantalla, Pantalla.TACTICA)
+
+        # Segunda formación de la lista: 4-3-3.
+        self.menus.procesar_tecla(pygame.K_DOWN)
+        self.menus.procesar_tecla(pygame.K_RETURN)
+
+        self.assertEqual(self.menus.formacion_nombre, "4-3-3")
+        self.assertIs(self.menus.consumir_accion(), Accion.FORMACION)
+
+        for equipo in (Equipo.LOCAL, Equipo.VISITANTE):
+            fichas = self.menus.plantillas_editables[equipo]
+            roles = [ficha.rol for ficha in fichas]
+
+            self.assertEqual(len(fichas), 11)
+            self.assertEqual(roles.count(Rol.PORTERO), 1)
+            self.assertEqual(roles.count(Rol.DEFENSA), 4)
+            self.assertEqual(roles.count(Rol.MEDIO), 3)
+            self.assertEqual(roles.count(Rol.DELANTERO), 3)
+
+        # La identidad de cada jugador se conserva al recolocar.
+        local = self.menus.plantillas_editables[Equipo.LOCAL]
+        self.assertEqual(local[0].nombre, "Cabrera")
+        self.assertEqual(local[0].dorsal, 1)
+        self.assertIs(local[0].rol, Rol.PORTERO)
+
+    def test_volver_encadena_pantallas_sin_atascarse(self) -> None:
+        # Opciones -> Escudo -> ESC -> ESC: de regreso al principal.
+        self.menus.procesar_tecla(pygame.K_DOWN)
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        self.menus.procesar_tecla(pygame.K_DOWN)
+        self.menus.procesar_tecla(pygame.K_DOWN)
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Personalizar escudo
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        self.assertIs(self.menus.pantalla, Pantalla.ESCUDO)
+
+        self.menus.procesar_tecla(pygame.K_ESCAPE)
+        self.assertIs(self.menus.pantalla, Pantalla.OPCIONES)
+        self.menus.procesar_tecla(pygame.K_ESCAPE)
+        self.assertIs(self.menus.pantalla, Pantalla.PRINCIPAL)
+
+        # Y desde la pausa, Configuración vuelve a la pausa.
+        self.menus.abrir_pausa()
+        self.menus.procesar_tecla(pygame.K_DOWN)
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Configuración
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        self.assertIs(self.menus.pantalla, Pantalla.OPCIONES)
+        self.menus.procesar_tecla(pygame.K_ESCAPE)
+        self.assertIs(self.menus.pantalla, Pantalla.PAUSA)
 
     def test_ayuda_muestra_los_controles_y_vuelve(self) -> None:
         self.menus.procesar_tecla(pygame.K_DOWN)
@@ -248,6 +311,9 @@ class MenusTests(unittest.TestCase):
             Pantalla.PRINCIPAL,
             Pantalla.OPCIONES,
             Pantalla.ESCUDO,
+            Pantalla.UNIFORME,
+            Pantalla.EDITOR,
+            Pantalla.TACTICA,
             Pantalla.AYUDA,
             Pantalla.PAUSA,
         ):

@@ -11,7 +11,6 @@ from .configuracion import (
     AMARILLO,
     BLANCO,
     CAMPO_RECT,
-    COLOR_EQUIPO,
     DISTANCIA_CONDUCCION,
     FACTOR_POSESION,
     FORMACION,
@@ -26,6 +25,12 @@ from .configuracion import (
     Equipo,
     Rol,
 )
+from .uniformes import (
+    UNIFORMES_POR_DEFECTO,
+    Uniforme,
+    dibujar_jugador_uniforme,
+)
+from .plantilla import JugadorPlantilla, plantilla_por_defecto
 from .utilidades import acotar_posicion, equipo_que_anota
 
 
@@ -33,13 +38,17 @@ class Jugador:
     """Jugador de cualquiera de los dos equipos.
 
     Los sprites no cambian durante la partida: se generan una sola vez
-    y quedan guardados en caché por la clave (equipo, tiene_balon).
+    y quedan guardados en caché por la clave (equipo, tiene_balon,
+    dorsal, uniforme, mostrar_numero).
     """
 
     RADIO = RADIO_JUGADOR
     MARGEN_SPRITE = 8  # Borde extra del sprite, para el aro de posesión.
 
-    _sprites: dict[tuple[Equipo, bool], pygame.Surface] = {}
+    _sprites: dict[
+        tuple[Equipo, bool, int, Uniforme, bool],
+        pygame.Surface,
+    ] = {}
 
     def __init__(
         self,
@@ -47,19 +56,34 @@ class Jugador:
         rol: Rol,
         x: float,
         y: float,
+        numero: int = 0,
+        uniforme: Uniforme | None = None,
+        mostrar_numero: bool = True,
+        nombre: str = "",
+        factor_velocidad: float = 1.0,
+        factor_fuerza: float = 1.0,
     ) -> None:
         self.equipo = equipo
         self.rol = rol
         self.pos = pygame.Vector2(x, y)
         self.posicion_base = pygame.Vector2(x, y)
-        self.velocidad = VELOCIDAD_JUGADOR
+        self.velocidad = VELOCIDAD_JUGADOR * factor_velocidad
+        self.factor_velocidad = factor_velocidad
+        self.factor_fuerza = factor_fuerza
         self.tiene_balon = False
         # Dirección de mirada: cada equipo arranca mirando al arco rival.
         self.direccion = pygame.Vector2(
             1.0 if equipo is Equipo.LOCAL else -1.0,
             0.0,
         )
-        self.color = COLOR_EQUIPO[equipo]
+        self.numero = numero
+        self.nombre = nombre
+        self.uniforme = (
+            uniforme
+            if uniforme is not None
+            else UNIFORMES_POR_DEFECTO[equipo]
+        )
+        self.mostrar_numero = mostrar_numero
         self.rect = pygame.Rect(0, 0, self.RADIO * 2, self.RADIO * 2)
         # Rect del sprite completo (con margen), para blitear sin crear
         # un rect nuevo en cada fotograma.
@@ -123,7 +147,13 @@ class Jugador:
         superficie.blit(sprite, self.rect_sprite)
 
     def _obtener_sprite(self) -> pygame.Surface:
-        clave = (self.equipo, self.tiene_balon)
+        clave = (
+            self.equipo,
+            self.tiene_balon,
+            self.numero,
+            self.uniforme,
+            self.mostrar_numero,
+        )
         sprite = self._sprites.get(clave)
 
         if sprite is None:
@@ -137,8 +167,12 @@ class Jugador:
         sprite = pygame.Surface((lado, lado), pygame.SRCALPHA)
         centro = (lado // 2, lado // 2)
 
-        pygame.draw.circle(sprite, self.color, centro, self.RADIO)
-        pygame.draw.circle(sprite, BLANCO, centro, self.RADIO, 2)
+        dibujar_jugador_uniforme(
+            sprite,
+            centro,
+            self.uniforme,
+            numero=self.numero if self.mostrar_numero else None,
+        )
 
         if self.tiene_balon:
             # Aro amarillo alrededor del jugador con el balón.
@@ -153,20 +187,55 @@ class Jugador:
         return sprite.convert_alpha()
 
 
-def crear_jugadores() -> list[Jugador]:
-    """Crea los 22 jugadores (11 por equipo) a partir de la formación."""
+def crear_jugadores(
+    uniformes: dict[Equipo, Uniforme] | None = None,
+    mostrar_numeros: bool = True,
+    plantillas: dict[Equipo, tuple[JugadorPlantilla, ...]] | None = None,
+) -> list[Jugador]:
+    """Crea los 22 jugadores (11 por equipo) a partir de la plantilla.
+
+    Cada equipo recibe su uniforme y las fichas de su plantilla (nombre,
+    dorsal, rol, posición y atributos). Sin plantilla se usa la formación
+    base con dorsales del 1 al 11.
+    """
     jugadores: list[Jugador] = []
 
     for equipo in (Equipo.LOCAL, Equipo.VISITANTE):
-        for posicion in FORMACION:
-            fraccion_x = posicion.x
+        uniforme = (uniformes or UNIFORMES_POR_DEFECTO).get(
+            equipo,
+            UNIFORMES_POR_DEFECTO[equipo],
+        )
+        fichas = (plantillas or {}).get(equipo)
+
+        if fichas is None:
+            fichas = plantilla_por_defecto(equipo)
+
+        for ficha, _posicion in zip(
+            fichas,
+            FORMACION,
+            strict=False,
+        ):
+            fraccion_x = ficha.x
 
             if equipo is Equipo.VISITANTE:
                 fraccion_x = 1.0 - fraccion_x
 
             x = CAMPO_RECT.left + fraccion_x * CAMPO_RECT.width
-            y = CAMPO_RECT.top + posicion.y * CAMPO_RECT.height
-            jugadores.append(Jugador(equipo, posicion.rol, x, y))
+            y = CAMPO_RECT.top + ficha.y * CAMPO_RECT.height
+            jugadores.append(
+                Jugador(
+                    equipo,
+                    ficha.rol,
+                    x,
+                    y,
+                    numero=ficha.dorsal,
+                    uniforme=uniforme,
+                    mostrar_numero=mostrar_numeros,
+                    nombre=ficha.nombre,
+                    factor_velocidad=ficha.factor_velocidad,
+                    factor_fuerza=ficha.factor_fuerza,
+                )
+            )
 
     return jugadores
 

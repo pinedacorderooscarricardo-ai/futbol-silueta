@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -16,8 +17,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pygame
 
 from futbol_silueta.aplicacion import Aplicacion
-from futbol_silueta.configuracion import ALTO, ANCHO, DURACION_MITAD, Estado
-from futbol_silueta.menus import Pantalla
+from futbol_silueta.configuracion import (
+    ALTO,
+    ANCHO,
+    DURACION_MITAD,
+    Equipo,
+    Estado,
+    Rol,
+)
+from futbol_silueta.guardado import Guardado
+from futbol_silueta.menus import Accion, Pantalla
 
 
 class AplicacionTests(unittest.TestCase):
@@ -32,7 +41,14 @@ class AplicacionTests(unittest.TestCase):
 
     def setUp(self) -> None:
         pygame.event.clear()
-        self.app = Aplicacion(self.pantalla)
+        # Cada prueba usa su propia base de datos temporal.
+        directorio = tempfile.TemporaryDirectory()
+        self.addCleanup(directorio.cleanup)
+        self.guardado = Guardado(
+            Path(directorio.name) / "pruebas.sqlite"
+        )
+        self.addCleanup(self.guardado.cerrar)
+        self.app = Aplicacion(self.pantalla, guardado=self.guardado)
 
     def _tecla(self, tecla: int) -> None:
         pygame.event.post(
@@ -98,6 +114,30 @@ class AplicacionTests(unittest.TestCase):
 
         self.app.actualizar(0.0)
         self.assertFalse(self.app.juego.sonidos.habilitado)
+
+    def test_la_formacion_elegida_llega_al_partido(self) -> None:
+        menus = self.app.menus
+        menus.pantalla = Pantalla.OPCIONES
+        menus.indice = 1  # Tácticas
+        menus.procesar_tecla(pygame.K_RETURN)
+        self.assertIs(menus.pantalla, Pantalla.TACTICA)
+
+        menus.indice = 1  # 4-3-3
+        menus.procesar_tecla(pygame.K_RETURN)
+        self.assertEqual(menus.formacion_nombre, "4-3-3")
+
+        self.app.procesar_eventos()  # consume la acción pendiente
+        self.assertIsNone(menus.consumir_accion())
+
+        self.assertEqual(self.app.juego.formacion_nombre, "4-3-3")
+        roles = [
+            jugador.rol
+            for jugador in self.app.juego.jugadores
+            if jugador.equipo is Equipo.LOCAL
+        ]
+        self.assertEqual(roles.count(Rol.DEFENSA), 4)
+        self.assertEqual(roles.count(Rol.MEDIO), 3)
+        self.assertEqual(roles.count(Rol.DELANTERO), 3)
 
     def test_escape_en_el_menu_principal_cierra(self) -> None:
         self._tecla(pygame.K_ESCAPE)

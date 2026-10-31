@@ -23,6 +23,7 @@ from .configuracion import (
     MENSAJE_ENTRETIEMPO,
     MENSAJE_FINAL,
     MENSAJE_GOL,
+    MENSAJE_REPETICION,
     NEGRO,
     PORTERIA_ALTO,
     PORTERIA_SUPERIOR,
@@ -32,6 +33,7 @@ from .configuracion import (
     TEXTO_CONTINUAR,
     TEXTO_ENTRETIEMPO,
     TEXTO_FINAL,
+    TEXTO_SALTAR_REPETICION,
     VERDE,
     VERDE_ENERGIA,
     Color,
@@ -59,6 +61,7 @@ class Vista:
     ALTO_ESCUDO_MARCADOR = 34
     POSICION_MENSAJE_GOL = (ANCHO // 2, ALTO // 2)
     POSICION_CONTINUAR = (ANCHO // 2, ALTO // 2 + 50)
+    POSICION_REPETICION = (ANCHO // 2, 108)
 
     def __init__(self, pantalla: pygame.Surface) -> None:
         self.pantalla = pantalla
@@ -112,6 +115,20 @@ class Vista:
             True,
             BLANCO,
         )
+        # Cartela y aviso de la repetición de gol.
+        self.superficie_repeticion = self._crear_superficie_con_fondo(
+            MENSAJE_REPETICION,
+            self.fuente_tiempo,
+            CIAN,
+            padding_x=16,
+            padding_y=8,
+            radio=8,
+        )
+        self.superficie_salto_repeticion = self.fuente_instrucciones.render(
+            TEXTO_SALTAR_REPETICION,
+            True,
+            BLANCO,
+        )
 
         # Caché del marcador: (goles dibujados, superficie).
         self._marcador_cache: tuple[
@@ -146,6 +163,8 @@ class Vista:
 
         if juego.estado is Estado.GOL:
             self._dibujar_mensaje_gol(juego)
+        elif juego.estado is Estado.REPETICION:
+            self._dibujar_mensaje_repeticion()
         elif juego.estado in ESTADOS_ESPERA:
             self._dibujar_mensaje_estado(juego.estado)
 
@@ -167,6 +186,21 @@ class Vista:
         self.pantalla.blit(
             self.superficie_continuar,
             self.superficie_continuar.get_rect(center=self.POSICION_CONTINUAR),
+        )
+
+    def _dibujar_mensaje_repeticion(self) -> None:
+        """Cartela de repetición en curso y cómo saltarla."""
+        self.pantalla.blit(
+            self.superficie_repeticion,
+            self.superficie_repeticion.get_rect(
+                center=self.POSICION_REPETICION
+            ),
+        )
+        self.pantalla.blit(
+            self.superficie_salto_repeticion,
+            self.superficie_salto_repeticion.get_rect(
+                center=self.POSICION_CONTINUAR
+            ),
         )
 
     def _dibujar_mensaje_estado(self, estado: Estado) -> None:
@@ -295,8 +329,8 @@ class Vista:
         """
         nivel = nivel_por_numero(juego.nivel)
         texto = (
-            f"NIVEL {juego.nivel}   ROJO {juego.goles_local} - "
-            f"{juego.goles_visitante} AZUL"
+            f"NIVEL {juego.nivel}   LOCAL {juego.goles_local} - "
+            f"{juego.goles_visitante} VISITANTE"
         )
         texto_render = self.fuente_marcador.render(texto, True, BLANCO)
         subtitulo = self.fuente_hud.render(nivel.rival, True, BLANCO)

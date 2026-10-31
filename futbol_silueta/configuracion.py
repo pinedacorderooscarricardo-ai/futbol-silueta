@@ -36,8 +36,6 @@ Color = tuple[int, int, int]
 
 VERDE: Color = (34, 139, 34)
 BLANCO: Color = (255, 255, 255)
-ROJO: Color = (200, 40, 40)
-AZUL: Color = (40, 80, 200)
 AMARILLO: Color = (255, 215, 0)
 NEGRO: Color = (20, 20, 20)
 CIAN: Color = (0, 255, 255)
@@ -61,6 +59,7 @@ class Estado(StrEnum):
 
     JUGANDO = "jugando"
     GOL = "gol"
+    REPETICION = "repeticion"
     ENTRETIEMPO = "entretiempo"
     FINAL = "final"
 
@@ -76,11 +75,6 @@ class Rol(StrEnum):
 
 EQUIPOS: tuple[Equipo, ...] = (Equipo.LOCAL, Equipo.VISITANTE)
 ESTADOS_ESPERA: tuple[Estado, ...] = (Estado.ENTRETIEMPO, Estado.FINAL)
-
-COLOR_EQUIPO: dict[Equipo, Color] = {
-    Equipo.LOCAL: ROJO,
-    Equipo.VISITANTE: AZUL,
-}
 
 # ============================================================
 # 4. Campo y porterías
@@ -145,6 +139,12 @@ COOLDOWN_ROBO = 400
 COOLDOWN_LIBERACION = 200
 DURACION_GOL = 1500
 DURACION_MITAD = 3 * 60 * 1000
+
+# Repetición de goles: segundos de partido que conserva el buffer
+# circular y velocidad de reproducción (<1.0 = cámara lenta; 0.4
+# reproduce 4 s grabados en 10 s reales).
+REPETICION_SEGUNDOS = 4.0
+VELOCIDAD_REPETICION = 0.4
 
 # ============================================================
 # 8. IA de formación
@@ -214,11 +214,13 @@ TEXTO_CONTINUAR = "Pulsa ESPACIO para continuar"
 TEXTO_ENTRETIEMPO = "Pulsa ESPACIO para el segundo tiempo"
 TEXTO_FINAL = "Pulsa ESPACIO para el siguiente nivel"
 MENSAJE_GOL: dict[Equipo, str] = {
-    Equipo.LOCAL: "¡GOOOL DEL ROJO!",
-    Equipo.VISITANTE: "GOL DEL AZUL...",
+    Equipo.LOCAL: "¡GOOOL DEL LOCAL!",
+    Equipo.VISITANTE: "GOL DEL VISITANTE...",
 }
 MENSAJE_ENTRETIEMPO = "ENTRETIEMPO"
 MENSAJE_FINAL = "FINAL"
+MENSAJE_REPETICION = "REPETICIÓN"
+TEXTO_SALTAR_REPETICION = "Pulsa ESPACIO para saltar la repetición"
 
 # ============================================================
 # 13. Formación
@@ -233,8 +235,12 @@ class PosicionFormacion(NamedTuple):
     y: float
 
 
-# El visitante usa esta misma formación reflejada en horizontal.
-FORMACION: tuple[PosicionFormacion, ...] = (
+# ============================================================
+# Tácticas y formaciones
+# ============================================================
+
+# El visitante usa la formación elegida reflejada en horizontal.
+FORMACION_442: tuple[PosicionFormacion, ...] = (
     PosicionFormacion(Rol.PORTERO, 0.05, 0.50),
     PosicionFormacion(Rol.DEFENSA, 0.22, 0.20),
     PosicionFormacion(Rol.DEFENSA, 0.22, 0.40),
@@ -247,6 +253,68 @@ FORMACION: tuple[PosicionFormacion, ...] = (
     PosicionFormacion(Rol.DELANTERO, 0.65, 0.40),
     PosicionFormacion(Rol.DELANTERO, 0.65, 0.60),
 )
+
+FORMACION_433: tuple[PosicionFormacion, ...] = (
+    PosicionFormacion(Rol.PORTERO, 0.05, 0.50),
+    PosicionFormacion(Rol.DEFENSA, 0.22, 0.15),
+    PosicionFormacion(Rol.DEFENSA, 0.22, 0.38),
+    PosicionFormacion(Rol.DEFENSA, 0.22, 0.62),
+    PosicionFormacion(Rol.DEFENSA, 0.22, 0.85),
+    PosicionFormacion(Rol.MEDIO, 0.42, 0.50),
+    PosicionFormacion(Rol.MEDIO, 0.52, 0.28),
+    PosicionFormacion(Rol.MEDIO, 0.52, 0.72),
+    PosicionFormacion(Rol.DELANTERO, 0.68, 0.20),
+    PosicionFormacion(Rol.DELANTERO, 0.72, 0.50),
+    PosicionFormacion(Rol.DELANTERO, 0.68, 0.80),
+)
+
+FORMACION_352: tuple[PosicionFormacion, ...] = (
+    PosicionFormacion(Rol.PORTERO, 0.05, 0.50),
+    PosicionFormacion(Rol.DEFENSA, 0.22, 0.25),
+    PosicionFormacion(Rol.DEFENSA, 0.20, 0.50),
+    PosicionFormacion(Rol.DEFENSA, 0.22, 0.75),
+    PosicionFormacion(Rol.MEDIO, 0.40, 0.12),
+    PosicionFormacion(Rol.MEDIO, 0.45, 0.32),
+    PosicionFormacion(Rol.MEDIO, 0.38, 0.50),
+    PosicionFormacion(Rol.MEDIO, 0.45, 0.68),
+    PosicionFormacion(Rol.MEDIO, 0.40, 0.88),
+    PosicionFormacion(Rol.DELANTERO, 0.68, 0.40),
+    PosicionFormacion(Rol.DELANTERO, 0.68, 0.60),
+)
+
+FORMACION_532: tuple[PosicionFormacion, ...] = (
+    PosicionFormacion(Rol.PORTERO, 0.05, 0.50),
+    PosicionFormacion(Rol.DEFENSA, 0.24, 0.10),
+    PosicionFormacion(Rol.DEFENSA, 0.22, 0.30),
+    PosicionFormacion(Rol.DEFENSA, 0.20, 0.50),
+    PosicionFormacion(Rol.DEFENSA, 0.22, 0.70),
+    PosicionFormacion(Rol.DEFENSA, 0.24, 0.90),
+    PosicionFormacion(Rol.MEDIO, 0.45, 0.30),
+    PosicionFormacion(Rol.MEDIO, 0.42, 0.50),
+    PosicionFormacion(Rol.MEDIO, 0.45, 0.70),
+    PosicionFormacion(Rol.DELANTERO, 0.68, 0.40),
+    PosicionFormacion(Rol.DELANTERO, 0.68, 0.60),
+)
+
+# Formaciones disponibles en el menú de tácticas, en orden de elección.
+NOMBRES_FORMACION: tuple[str, ...] = ("4-4-2", "4-3-3", "3-5-2", "5-3-2")
+
+FORMACIONES: dict[str, tuple[PosicionFormacion, ...]] = {
+    "4-4-2": FORMACION_442,
+    "4-3-3": FORMACION_433,
+    "3-5-2": FORMACION_352,
+    "5-3-2": FORMACION_532,
+}
+
+# Formación por defecto, para el código que no indica una táctica.
+FORMACION: tuple[PosicionFormacion, ...] = FORMACION_442
+
+
+def formacion_por_nombre(
+    nombre: str,
+) -> tuple[PosicionFormacion, ...]:
+    """Devuelve la formación pedida, con la 4-4-2 como alternativa."""
+    return FORMACIONES.get(nombre, FORMACION)
 
 # Punto hacia el que conduce el balón la IA visitante: un poco más allá
 # de la línea de gol izquierda, a la altura del centro de la portería.

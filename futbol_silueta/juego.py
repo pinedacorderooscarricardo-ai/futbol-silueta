@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections import deque
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
@@ -21,10 +22,12 @@ from .configuracion import (
     ENERGIA_MINIMA_SPRINT,
     EQUIPOS,
     ESTADOS_ESPERA,
+    FORMACIONES,
     Estado,
     FACTOR_COLISION,
     FACTOR_POSESION,
     FACTORES_ATAQUE,
+    FPS,
     FUERZA_DESPEJE_PORTERO,
     FUERZA_PATEO,
     GASTO_SPRINT,
@@ -39,7 +42,9 @@ from .configuracion import (
     PORTERIA_SUPERIOR,
     RADIO_BALON,
     RECARGA_ENERGIA,
+    REPETICION_SEGUNDOS,
     VELOCIDAD_MINIMA_ATAJADA,
+    VELOCIDAD_REPETICION,
     VELOCIDAD_SPRINT,
     Color,
     Equipo,
@@ -53,6 +58,9 @@ from .entidades import (
 )
 from .escudos import FormaEscudo, Escudo
 from .niveles import NIVEL_MAXIMO, Nivel, nivel_por_numero
+from .plantilla import JugadorPlantilla, plantillas_por_defecto
+from .repeticion import Instante, aplicar_instante, capturar_instante
+from .uniformes import UNIFORMES_POR_DEFECTO, Uniforme
 from .utilidades import acotar, acotar_posicion, equipo_rival
 
 if TYPE_CHECKING:
@@ -85,6 +93,19 @@ class Juego:
         self.nivel = 1
         self.escudo = Escudo.crear_para_nivel(self.nivel)
 
+        # Uniformes de ambos equipos y si se muestran los dorsales.
+        self.uniformes: dict[Equipo, Uniforme] = dict(
+            UNIFORMES_POR_DEFECTO
+        )
+        self.mostrar_numeros = True
+
+        # Fichas editables de los 22 jugadores (nombres, dorsales,
+        # atributos y posiciones).
+        self.plantillas = plantillas_por_defecto()
+
+        # Táctica en uso: nombre de la formación elegida en el menú.
+        self.formacion_nombre = "4-4-2"
+
         self.mitad = 1
         self.tiempo_restante = float(DURACION_MITAD)
         self.energia_actual = float(ENERGIA_MAXIMA)
@@ -96,6 +117,15 @@ class Juego:
         self._equipo_con_balon: Equipo | None = None
         self._perseguidores: set[Jugador] = set()
         self._marcajes: dict[Jugador, Jugador] = {}
+
+        # Repeticiones de gol: buffer circular con los últimos segundos
+        # de juego y, al marcar, la jugada congelada que se reproduce
+        # en cámara lenta tras la celebración.
+        self._instantes: deque[Instante] = deque(
+            maxlen=round(REPETICION_SEGUNDOS * FPS)
+        )
+        self.repeticion: list[Instante] | None = None
+        self._indice_repeticion = 0.0
 
         self.reiniciar_jugada(con_silbato=False)
 
@@ -147,6 +177,43 @@ class Juego:
         if forma is not None:
             self.escudo.cambiar_forma(forma)
 
+    def personalizar_uniformes(
+        self,
+        uniformes: dict[Equipo, Uniforme],
+        mostrar_numeros: bool,
+    ) -> None:
+        """Aplica las equipaciones y los dorsales elegidos por el jugador."""
+        self.uniformes = dict(uniformes)
+        self.mostrar_numeros = mostrar_numeros
+
+    def personalizar_plantillas(
+        self,
+        plantillas: dict[Equipo, tuple[JugadorPlantilla, ...]],
+    ) -> None:
+        """Aplica las fichas editadas por el jugador en el editor."""
+        self.plantillas = {
+            equipo: tuple(fichas) for equipo, fichas in plantillas.items()
+        }
+
+    def cambiar_formacion(
+        self,
+        nombre: str,
+        recolocar: bool = True,
+    ) -> None:
+        """Adopta una formación de tácticas como la disposición en uso.
+
+        ``recolocar`` recrea a los jugadores en sus nuevas posiciones
+        con saque al centro; se evita cuando la partida se reinicia de
+        todos modos (por ejemplo al pulsar JUGAR). Las fichas ya deben
+        llegar recolocadas: el menú de tácticas las reajusta.
+        """
+        self.formacion_nombre = (
+            nombre if nombre in FORMACIONES else "4-4-2"
+        )
+
+        if recolocar:
+            self.reiniciar_jugada()
+
     # --------------------------------------------------
     # Inicio, reinicio y posesión
     # --------------------------------------------------
@@ -157,7 +224,11 @@ class Juego:
         La primera jugada del arranque no suena para no silbar mientras
         el jugador todavía está en el menú principal.
         """
-        self.jugadores = crear_jugadores()
+        self.jugadores = crear_jugadores(
+            self.uniformes,
+            self.mostrar_numeros,
+            self.plantillas,
+        )
         self.jugador_controlado = elegir_delantero_controlado(self.jugadores)
 
         # Los porteros se usan en cada subpaso del balón: se guardan una
@@ -175,6 +246,11 @@ class Juego:
             pygame.time.get_ticks() - COOLDOWN_LIBERACION
         )
         self._invalidar_decisiones()
+
+        # Los instantes referencian posiciones por índice: al recrearse
+        # los jugadores, la grabación anterior ya no corresponde.
+        self._instantes.clear()
+        self.repeticion = None
 
         self.balon.colocar_en_el_centro()
         self.estado = Estado.JUGANDO
@@ -361,7 +437,7 @@ class Juego:
         fuerza = min(
             max(PASE_FUERZA_MIN, distancia * PASE_FUERZA_FACTOR),
             PASE_FUERZA_MAX,
-        )
+        ) * jugador.factor_fuerza
 
         self.sonidos.pase()
         self.liberar_posesion(direccion * fuerza)
@@ -422,14 +498,19 @@ class Juego:
         if gol is not None:
             self.marcar_gol(gol)
 
-    def _chutar(self, direccion: pygame.Vector2) -> None:
-        """Suelta el balón con la fuerza de un disparo en ``direccion``."""
+    def _chutar(self, direccion: pygame.Vector2, chutador: Jugador) -> None:
+        """Suelta el balón con la fuerza de un disparo en ``direccion``.
+
+        La fuerza base se escala con el atributo de fuerza del chutador.
+        """
         if direccion.length_squared() < 1e-6:
             return
 
         direccion = direccion.normalize()
         self.sonidos.disparo()
-        self.liberar_posesion(direccion * FUERZA_PATEO)
+        self.liberar_posesion(
+            direccion * FUERZA_PATEO * chutador.factor_fuerza
+        )
 
     # --------------------------------------------------
     # IA
@@ -476,7 +557,11 @@ class Juego:
                 jugador in perseguidores,
                 marcajes.get(jugador),
             )
-            jugador.mover_hacia(objetivo, velocidad_ia, dt)
+            jugador.mover_hacia(
+                objetivo,
+                velocidad_ia * jugador.factor_velocidad,
+                dt,
+            )
 
     def _elegir_perseguidores(
         self,
@@ -595,7 +680,9 @@ class Juego:
 
         direccion.normalize_ip()
         self.sonidos.pase()
-        self.liberar_posesion(direccion * FUERZA_DESPEJE_PORTERO)
+        self.liberar_posesion(
+            direccion * FUERZA_DESPEJE_PORTERO * portero.factor_fuerza
+        )
 
     def _accion_portador_ia(self, jugador: Jugador, dt: float) -> None:
         """Conduce hacia el arco o dispara si ya está en zona de tiro."""
@@ -605,7 +692,7 @@ class Juego:
             # El portero IA no se va de dribling: aguanta y despeja.
             jugador.mover_hacia(
                 jugador.posicion_base,
-                parametros.velocidad_ia,
+                parametros.velocidad_ia * jugador.factor_velocidad,
                 dt,
             )
             if (
@@ -632,14 +719,16 @@ class Juego:
 
         jugador.mover_hacia(
             OBJETIVO_ATAQUE_IA,
-            parametros.velocidad_ia * FACTOR_POSESION,
+            parametros.velocidad_ia
+            * FACTOR_POSESION
+            * jugador.factor_velocidad,
             dt,
         )
 
     def _disparar_ia(self, jugador: Jugador) -> None:
         """Dispara la IA hacia el lado abierto del arco local."""
         objetivo = self._objetivo_para_disparo_ia(jugador)
-        self._chutar(objetivo - jugador.pos)
+        self._chutar(objetivo - jugador.pos, jugador)
 
     def _objetivo_para_disparo_ia(
         self,
@@ -841,7 +930,7 @@ class Juego:
         if control is None or self.portador is not control:
             return
 
-        self._chutar(control.direccion)
+        self._chutar(control.direccion, control)
 
     # --------------------------------------------------
     # Goles, eventos y bucle principal
@@ -865,14 +954,24 @@ class Juego:
         self.tiempo_gol = pygame.time.get_ticks()
         self.sonidos.gol()
 
+        # Congela la jugada completa, hasta el balón dentro de la red,
+        # para reproducirla en cámara lenta tras la celebración.
+        self._instantes.append(capturar_instante(self))
+        self.repeticion = list(self._instantes)
+        self._indice_repeticion = 0.0
+
     def actualizar(self, dt: float) -> None:
         """Avanza la simulación un fotograma."""
         if self.estado in ESTADOS_ESPERA:
             return
 
+        if self.estado is Estado.REPETICION:
+            self._avanzar_repeticion()
+            return
+
         if self.estado is Estado.GOL:
             if pygame.time.get_ticks() - self.tiempo_gol >= DURACION_GOL:
-                self.reiniciar_jugada()
+                self._iniciar_repeticion()
             return
 
         self.tiempo_restante -= dt * 1000.0
@@ -887,9 +986,37 @@ class Juego:
         self._resolver_colisiones()
         self.actualizar_balon(dt)
 
-        # Si se marcó gol, actualizar_balon ya cambió el estado.
+        # Si se marcó gol, actualizar_balon ya cambió el estado y
+        # congeló la repetición: solo se graba en juego corriente.
         if self.estado is Estado.JUGANDO:
+            self._instantes.append(capturar_instante(self))
             self.actualizar_posesion()
+
+    def _iniciar_repeticion(self) -> None:
+        """Reproduce el gol recién marcado en cámara lenta."""
+        if not self.repeticion:
+            self.reiniciar_jugada()
+            return
+
+        self.estado = Estado.REPETICION
+        self._indice_repeticion = 0.0
+        aplicar_instante(self, self.repeticion[0])
+
+    def _avanzar_repeticion(self) -> None:
+        """Muestra el siguiente fotograma grabado; al acabar, saca."""
+        repeticion = self.repeticion
+
+        if not repeticion:
+            self.reiniciar_jugada()
+            return
+
+        self._indice_repeticion += VELOCIDAD_REPETICION
+
+        if self._indice_repeticion >= len(repeticion):
+            self.reiniciar_jugada()
+            return
+
+        aplicar_instante(self, repeticion[int(self._indice_repeticion)])
 
     def _terminar_mitad(self) -> None:
         """Detiene el juego al final del primer o segundo tiempo."""
@@ -916,8 +1043,11 @@ class Juego:
             self.pasar_al_companero_mas_cercano()
 
     def _al_pulsar_espacio(self) -> None:
-        """ESPACIO: chutar, continuar tras un gol o pasar de tiempo."""
+        """ESPACIO: chutar, pasar de la celebración a la repetición,
+        saltarla o pasar de tiempo."""
         if self.estado is Estado.GOL:
+            self._iniciar_repeticion()
+        elif self.estado is Estado.REPETICION:
             self.reiniciar_jugada()
         elif self.estado is Estado.ENTRETIEMPO:
             self._empezar_segunda_mitad()

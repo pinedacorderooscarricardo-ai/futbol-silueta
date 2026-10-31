@@ -18,6 +18,7 @@ from .configuracion import (
     TITULO_VENTANA,
 )
 from .juego import Juego
+from .guardado import Guardado
 from .menus import Accion, Menus, Pantalla
 from .vista import Vista
 
@@ -25,7 +26,11 @@ from .vista import Vista
 class Aplicacion:
     """Coordina el partido, los menús y el bucle de fotogramas."""
 
-    def __init__(self, pantalla: pygame.Surface | None = None) -> None:
+    def __init__(
+        self,
+        pantalla: pygame.Surface | None = None,
+        guardado: Guardado | None = None,
+    ) -> None:
         if pantalla is None:
             pantalla = pygame.display.get_surface()
 
@@ -40,6 +45,10 @@ class Aplicacion:
         self.juego = Juego(self.vista)
         self.menus = Menus()
         self.ejecutando = True
+
+        # Base de datos con la configuración y la plantilla guardadas.
+        self.guardado = guardado if guardado is not None else Guardado()
+        self.guardado.cargar_en(self.menus)
 
         # Medidor de rendimiento (se activa con F3; no cuesta nada apagado).
         self.mostrar_rendimiento = False
@@ -57,33 +66,40 @@ class Aplicacion:
         """
         acumulado = 0.0
 
-        while self.ejecutando:
-            acumulado += min(self.reloj.tick(FPS) / 1000.0, DT_MAXIMO)
+        try:
+            while self.ejecutando:
+                acumulado += min(self.reloj.tick(FPS) / 1000.0, DT_MAXIMO)
 
-            self.procesar_eventos()
+                self.procesar_eventos()
 
-            if not self.ejecutando:
-                break
+                if not self.ejecutando:
+                    break
 
-            inicio = time.perf_counter()
-            pasos = 0
+                inicio = time.perf_counter()
+                pasos = 0
 
-            while acumulado >= DT_FIJO and pasos < MAX_PASOS_FISICA:
-                self.actualizar(DT_FIJO)
-                acumulado -= DT_FIJO
-                pasos += 1
+                while acumulado >= DT_FIJO and pasos < MAX_PASOS_FISICA:
+                    self.actualizar(DT_FIJO)
+                    acumulado -= DT_FIJO
+                    pasos += 1
 
-            if pasos == MAX_PASOS_FISICA and acumulado > 0.0:
-                # El equipo no da abasto: se descarta el atraso pendiente
-                # en vez de seguir acumulándolo (espiral de la muerte).
-                acumulado = 0.0
+                if pasos == MAX_PASOS_FISICA and acumulado > 0.0:
+                    # El equipo no da abasto: se descarta el atraso
+                    # pendiente en vez de seguir acumulándolo (espiral de
+                    # la muerte).
+                    acumulado = 0.0
 
-            self._medir_simulacion(inicio, pasos)
+                self._medir_simulacion(inicio, pasos)
 
-            inicio = time.perf_counter()
-            self.dibujar()
-            pygame.display.flip()
-            self._medir_dibujo(inicio)
+                inicio = time.perf_counter()
+                self.dibujar()
+                pygame.display.flip()
+                self._medir_dibujo(inicio)
+        finally:
+            # Al cerrar, por cualquier vía, quedan guardados los ajustes
+            # y la plantilla tal como están los menús.
+            self.guardado.guardar_desde(self.menus)
+            self.guardado.cerrar()
 
     def _medir_simulacion(self, inicio: float, pasos: int) -> None:
         """Promedia cuánto tardó la simulación de este fotograma."""
@@ -166,6 +182,25 @@ class Aplicacion:
         if accion in (Accion.JUGAR, Accion.REINICIAR):
             color, color_borde, forma = self.menus.escudo_seleccionado
             self.juego.personalizar_escudo(color, color_borde, forma)
+            self.juego.personalizar_uniformes(
+                self.menus.uniformes_seleccionados,
+                self.menus.numeros_activados,
+            )
+            self.juego.personalizar_plantillas(
+                self.menus.plantillas_seleccionadas
+            )
+            self.juego.cambiar_formacion(
+                self.menus.formacion_nombre,
+                recolocar=False,
+            )
             self.juego.nueva_partida()
+            self.guardado.guardar_desde(self.menus)
+        elif accion is Accion.FORMACION:
+            # Las fichas ya llegan recolocadas desde el menú de
+            # tácticas: solo falta recrear a los jugadores en el campo.
+            self.juego.personalizar_plantillas(
+                self.menus.plantillas_seleccionadas
+            )
+            self.juego.cambiar_formacion(self.menus.formacion_nombre)
         elif accion is Accion.SALIR:
             self.ejecutando = False
