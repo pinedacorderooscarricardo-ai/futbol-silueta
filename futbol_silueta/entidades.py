@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
+from typing import NamedTuple
 
 import pygame
 
@@ -13,7 +14,6 @@ from .configuracion import (
     CAMPO_RECT,
     DISTANCIA_CONDUCCION,
     FACTOR_POSESION,
-    FORMACION,
     FPS,
     FRICCION,
     NEGRO,
@@ -30,8 +30,14 @@ from .uniformes import (
     Uniforme,
     dibujar_jugador_uniforme,
 )
-from .plantilla import JugadorPlantilla, plantilla_por_defecto
+from .plantilla import (
+    JugadorPlantilla,
+    normalizar_plantilla,
+)
 from .utilidades import acotar_posicion, equipo_que_anota
+
+# Cuánto se eleva un jugador al saltar, en píxeles.
+ALTURA_SALTO = 16.0
 
 
 class Jugador:
@@ -80,6 +86,16 @@ class Jugador:
         self.nombre = nombre
         # Milisegundos que faltan para terminar un lance (solo porteros).
         self.lance_restante = 0.0
+        # Cansancio de la IA (0-1): sube persiguiendo o conduciendo y
+        # reduce la velocidad; la rival rota a sus agotados.
+        self.cansancio = 0.0
+        # Animación procedural: zancada al correr, salto y caída.
+        self.fase = 0.0
+        self._impulso = 0.0
+        self.salto_restante = 0.0
+        self.salto_total = 1.0
+        self.caida_restante = 0.0
+        self.caida_total = 1.0
         self.uniforme = (
             uniforme
             if uniforme is not None
@@ -117,8 +133,35 @@ class Jugador:
 
         self.pos.x += dx
         self.pos.y += dy
+        # Zancada: la fase de carrera avanza con los pasos dados.
+        self.fase += math.hypot(dx, dy) * 0.11
+        self._impulso = 1.0
         acotar_posicion(self.pos, self.RADIO)
         self.actualizar_rect()
+
+    # --------------------------------------------------
+    # Animaciones
+    # --------------------------------------------------
+
+    def saltar(self, duracion: float = 0.8) -> None:
+        """Salta durante ``duracion`` segundos (celebraciones y remates)."""
+        self.salto_total = duracion
+        self.salto_restante = duracion
+
+    def caer(self, duracion: float = 0.7) -> None:
+        """Cae al suelo durante ``duracion`` segundos y se levanta."""
+        self.caida_total = duracion
+        self.caida_restante = duracion
+
+    def avanzar_animacion(self, dt: float) -> None:
+        """Hace correr los temporizadores de salto, caída e impulso."""
+        self._impulso = max(0.0, self._impulso - 3.0 * dt)
+
+        if self.salto_restante > 0.0:
+            self.salto_restante = max(0.0, self.salto_restante - dt)
+
+        if self.caida_restante > 0.0:
+            self.caida_restante = max(0.0, self.caida_restante - dt)
 
     def mover_hacia(
         self,
@@ -146,7 +189,25 @@ class Jugador:
 
     def dibujar(self, superficie: pygame.Surface) -> None:
         sprite = self._obtener_sprite()
-        superficie.blit(sprite, self.rect_sprite)
+        dy = 0.0
+        angulo = 0.0
+
+        if self.caida_restante > 0.0:
+            # La caída: tumbado un instante y de pie de nuevo.
+            progreso = 1.0 - self.caida_restante / self.caida_total
+            angulo = 72.0 * math.sin(math.pi * progreso)
+        else:
+            if self.salto_restante > 0.0:
+                progreso = 1.0 - self.salto_restante / self.salto_total
+                dy -= ALTURA_SALTO * math.sin(math.pi * progreso)
+
+            # Zancada: rebote al correr, apagándose al detenerse.
+            dy -= abs(math.sin(self.fase)) * 3.0 * self._impulso
+
+        if angulo:
+            sprite = pygame.transform.rotate(sprite, angulo)
+
+        superficie.blit(sprite, self.rect_sprite.move(0, round(dy)))
 
     def _obtener_sprite(self) -> pygame.Surface:
         clave = (
@@ -163,6 +224,17 @@ class Jugador:
             self._sprites[clave] = sprite
 
         return sprite
+
+    @classmethod
+    def limpiar_cache(cls) -> None:
+        """Descarta los sprites guardados.
+
+        Los sprites se convierten al formato de la pantalla; si pygame se
+        reinicia (por ejemplo entre pruebas) las superficies antiguas
+        dejan de ser válidas. La vista llama a este método al arrancar
+        para reconstruirlos con el nuevo contexto gráfico.
+        """
+        cls._sprites.clear()
 
     def _crear_sprite(self) -> pygame.Surface:
         lado = (self.RADIO + self.MARGEN_SPRITE) * 2
@@ -193,19 +265,49 @@ def _fichas_normalizadas(
     equipo: Equipo,
     fichas: tuple[JugadorPlantilla, ...] | None,
 ) -> tuple[JugadorPlantilla, ...]:
-    """Devuelve once fichas para ``equipo``, completando o recortando.
+    """Devuelve once fichas válidas para ``equipo``.
 
-    Si la plantilla guardada quedó corta (una versión anterior, datos
-    incompletos) se completa con las fichas por defecto; si quedó larga,
-    se recorta. Así el partido siempre tiene 22 jugadores.
+    La normalización (completar, recortar y sanear atributos) vive en
+    :func:`plantilla.normalizar_plantilla`, compartida con el guardado y
+    el editor: así una plantilla corta o dañada nunca deja el campo a
+    medias ni con valores imposibles.
     """
-    por_defecto = plantilla_por_defecto(equipo)
+    return normalizar_plantilla(fichas, equipo)
 
-    if fichas is None:
-        return por_defecto
 
-    relleno = por_defecto[len(fichas):]
-    return (*fichas[: len(FORMACION)], *relleno)
+def crear_jugador_de_ficha(
+    equipo: Equipo,
+    ficha: JugadorPlantilla,
+    uniforme: Uniforme | None = None,
+    mostrar_numero: bool = True,
+) -> Jugador:
+    """Crea el ``Jugador`` en campo que corresponde a una ficha.
+
+    La posición ``x`` de la ficha mira desde el arco propio: el
+    visitante se refleja, igual que al crear la plantilla entera. Se
+    usa tanto al armar los equipos como al meter a un suplente.
+    """
+    uniforme_efectivo = (
+        uniforme
+        if uniforme is not None
+        else UNIFORMES_POR_DEFECTO[equipo]
+    )
+    fraccion_x = ficha.x if equipo is Equipo.LOCAL else 1.0 - ficha.x
+    x = CAMPO_RECT.left + fraccion_x * CAMPO_RECT.width
+    y = CAMPO_RECT.top + ficha.y * CAMPO_RECT.height
+
+    return Jugador(
+        equipo,
+        ficha.rol,
+        x,
+        y,
+        numero=ficha.dorsal,
+        uniforme=uniforme_efectivo,
+        mostrar_numero=mostrar_numero,
+        nombre=ficha.nombre,
+        factor_velocidad=ficha.factor_velocidad,
+        factor_fuerza=ficha.factor_fuerza,
+    )
 
 
 def crear_jugadores(
@@ -231,25 +333,12 @@ def crear_jugadores(
             equipo,
             (plantillas or {}).get(equipo),
         ):
-            fraccion_x = ficha.x
-
-            if equipo is Equipo.VISITANTE:
-                fraccion_x = 1.0 - fraccion_x
-
-            x = CAMPO_RECT.left + fraccion_x * CAMPO_RECT.width
-            y = CAMPO_RECT.top + ficha.y * CAMPO_RECT.height
             jugadores.append(
-                Jugador(
+                crear_jugador_de_ficha(
                     equipo,
-                    ficha.rol,
-                    x,
-                    y,
-                    numero=ficha.dorsal,
-                    uniforme=uniforme,
-                    mostrar_numero=mostrar_numeros,
-                    nombre=ficha.nombre,
-                    factor_velocidad=ficha.factor_velocidad,
-                    factor_fuerza=ficha.factor_fuerza,
+                    ficha,
+                    uniforme,
+                    mostrar_numeros,
                 )
             )
 
@@ -280,6 +369,18 @@ def elegir_delantero_controlado(jugadores: Sequence[Jugador]) -> Jugador:
     )
 
 
+class SalidaBalon(NamedTuple):
+    """Lo que ocurre cuando el balón alcanza un borde del campo.
+
+    ``gol`` es el equipo que anota si el balón entró en una portería y
+    ``esquina`` el que cobra el saque de esquina si salió por la línea
+    de fondo tras tocar al equipo defensor.
+    """
+
+    gol: Equipo | None = None
+    esquina: Equipo | None = None
+
+
 class Balon:
     """Balón: posición, física libre y sprite.
 
@@ -300,12 +401,11 @@ class Balon:
         self.pos.update(CAMPO_RECT.center)
         self.vel.update(0.0, 0.0)
 
-    def actualizar_conducido(self, portador: Jugador) -> Equipo | None:
+    def actualizar_conducido(self, portador: Jugador) -> SalidaBalon:
         """Pega el balón delante del jugador que lo conduce.
 
-        Devuelve el equipo que anota si el balón cruza una línea de gol
-        (conducirlo también puede acabar en autogol). Si no hay gol, lo
-        mantiene dentro del campo.
+        Devuelve la salida del balón: conduce también puede acabar en
+        gol (o autogol); sin gol, lo mantiene dentro del campo.
         """
         self.pos.update(
             portador.pos.x + portador.direccion.x * DISTANCIA_CONDUCCION,
@@ -318,20 +418,25 @@ class Balon:
         if gol is None:
             acotar_posicion(self.pos, self.RADIO)
 
-        return gol
+        return SalidaBalon(gol=gol)
 
     def actualizar_libre(
         self,
         dt: float,
         intentar_recoger: Callable[[], bool],
-    ) -> Equipo | None:
+        friccion: float = FRICCION,
+        tocado_por: Equipo | None = None,
+        viento: pygame.Vector2 | None = None,
+    ) -> SalidaBalon:
         """Física del balón libre, avanzando en subpasos.
 
         Los subpasos evitan que un balón rápido atraviese a un jugador
         entre dos fotogramas. En cada subpaso: se mueve, roza con el
         césped, rebota en los bordes y puede ser recogido por alguien.
+        La fricción la aporta el clima del estadio y el viento empuja
+        al balón mientras vuela.
 
-        Devuelve el equipo que anota si entra en una portería, o None.
+        Devuelve la salida del balón: gol o córner, si los hubo.
         """
         velocidad = self.vel.length()
         pasos = max(
@@ -341,32 +446,37 @@ class Balon:
         dt_paso = dt / pasos
         # La fricción es la misma en todos los subpasos: se calcula
         # una sola vez en lugar de una potencia por subpaso.
-        factor_friccion = FRICCION ** (dt_paso * FPS)
+        factor_friccion = friccion ** (dt_paso * FPS)
+        empuje_viento = (
+            viento * dt_paso if viento is not None else pygame.Vector2()
+        )
 
         for _ in range(pasos):
+            self.vel += empuje_viento
             self.pos.x += self.vel.x * dt_paso
             self.pos.y += self.vel.y * dt_paso
             self.vel *= factor_friccion
             self._detener_si_va_lento()
 
-            gol = self._rebotar()
-            if gol is not None:
-                return gol
+            salida = self._rebotar(tocado_por)
+            if salida.gol is not None or salida.esquina is not None:
+                return salida
 
             if intentar_recoger():
-                return None
+                return SalidaBalon()
 
             if self.vel.length_squared() == 0.0:
                 break
 
-        return None
+        return SalidaBalon()
 
     def _detener_si_va_lento(self) -> None:
         if self.vel.length_squared() < VELOCIDAD_MINIMA_BALON**2:
             self.vel.update(0.0, 0.0)
 
-    def _rebotar(self) -> Equipo | None:
-        """Rebota en los bordes. Devuelve el equipo que anota, si hay gol."""
+    def _rebotar(self, tocado_por: Equipo | None) -> SalidaBalon:
+        """Rebota en los bordes; en las líneas de fondo puede haber gol
+        o, si el último toque fue del equipo defensor, córner."""
         # Bordes superior e inferior.
         if self.pos.y - self.RADIO < CAMPO_RECT.top:
             self.pos.y = CAMPO_RECT.top + self.RADIO
@@ -375,19 +485,28 @@ class Balon:
             self.pos.y = CAMPO_RECT.bottom - self.RADIO
             self.vel.y = -abs(self.vel.y)
 
-        # Líneas de gol: gol si entra por la portería; si no, rebote.
+        # Líneas de gol: gol si entra por la portería; córner si sale
+        # tras tocar al defensor; si no, rebote.
         gol = equipo_que_anota(self.pos.x, self.pos.y)
         if gol is not None:
-            return gol
+            return SalidaBalon(gol=gol)
 
         if self.pos.x + self.RADIO >= CAMPO_RECT.right:
+            if tocado_por is Equipo.VISITANTE:
+                # El visitante defiende su línea: córner para el local.
+                return SalidaBalon(esquina=Equipo.LOCAL)
+
             self.pos.x = CAMPO_RECT.right - self.RADIO
             self.vel.x = -abs(self.vel.x)
         elif self.pos.x - self.RADIO <= CAMPO_RECT.left:
+            if tocado_por is Equipo.LOCAL:
+                # El local defiende su línea: córner para el visitante.
+                return SalidaBalon(esquina=Equipo.VISITANTE)
+
             self.pos.x = CAMPO_RECT.left + self.RADIO
             self.vel.x = abs(self.vel.x)
 
-        return None
+        return SalidaBalon()
 
     def dibujar(self, superficie: pygame.Surface) -> None:
         if self._sprite is None:

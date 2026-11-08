@@ -19,11 +19,15 @@ from futbol_silueta.configuracion import (
     ANCHO,
     CAMPO_RECT,
     DURACION_GOL,
+    FORMACION_REMONTADA,
     PORTERIA_CENTRO,
+    RADIO_BALON,
     Equipo,
     Estado,
+    Rol,
 )
-from futbol_silueta.estadios import Cesped, Diseno, Momento
+from futbol_silueta.estadios import Cesped, Clima, Diseno, Momento
+from futbol_silueta.estadisticas import registrar_resultado
 from futbol_silueta.juego import Juego
 from futbol_silueta.menus import Accion, Boton, Menus, Pantalla
 from futbol_silueta.uniformes import UNIFORMES_POR_DEFECTO
@@ -222,7 +226,13 @@ def flujo_robustez() -> None:
     )
     menus._ejecutar(Accion.JUGAR)
     comprobar(
-        "principal -> jugar entra al partido",
+        "principal -> jugar abre el selector de modos",
+        menus.pantalla,
+        Pantalla.MODOS,
+    )
+    menus._ejecutar(Accion.CAMPANA)
+    comprobar(
+        "modos -> campaña entra al partido",
         menus.pantalla,
         Pantalla.PARTIDO,
     )
@@ -579,6 +589,32 @@ def flujo_repeticion() -> None:
         Estado.JUGANDO,
     )
 
+    # El narrador comentó el gol y R vuelve a mostrar la jugada.
+    if juego.comentario_gol:
+        print("ok     el narrador comentó el gol")
+    else:
+        print("FALLO  el gol no tuvo comentario del narrador")
+        fallos.append("narrador del gol")
+
+    juego.balon.pos.update(CAMPO_RECT.centerx + 80, PORTERIA_CENTRO)
+    juego.procesar_tecla(pygame.K_r)
+    comprobar_valor(
+        "R vuelve a mostrar la mejor jugada",
+        juego.estado,
+        Estado.REPETICION,
+    )
+    juego.procesar_tecla(pygame.K_SPACE)
+    comprobar_valor(
+        "tras la repetición se reanuda la jugada igual",
+        juego.estado,
+        Estado.JUGANDO,
+    )
+    comprobar_valor(
+        "el balón vuelve a donde estaba",
+        (round(juego.balon.pos.x), round(juego.balon.pos.y)),
+        (CAMPO_RECT.centerx + 80, PORTERIA_CENTRO),
+    )
+
 
 def flujo_estadio() -> None:
     """Pantalla de estadio: ciclar opciones y aplicarlas al partido."""
@@ -589,12 +625,14 @@ def flujo_estadio() -> None:
 
     menus._ejecutar(Accion.CESPED)
     menus._ejecutar(Accion.MOMENTO)
+    menus._ejecutar(Accion.CLIMA)
     menus._ejecutar(Accion.DISENO)
     menus._ejecutar(Accion.GRADAS)
 
     estadio = menus.estadio_seleccionado
     comprobar_valor("césped cicla a oscuro", estadio.cesped, Cesped.OSCURO)
     comprobar_valor("momento pasa a noche", estadio.momento, Momento.NOCHE)
+    comprobar_valor("clima pasa a lluvia", estadio.clima, Clima.LLUVIA)
     comprobar_valor("diseño pasa a rayas", estadio.diseno, Diseno.RAYAS)
     comprobar_valor("gradas sin aficionados", estadio.gradas, False)
 
@@ -606,6 +644,11 @@ def flujo_estadio() -> None:
         "etiqueta del césped muestra OSCURO",
         etiquetas[Accion.CESPED],
         "Césped: OSCURO",
+    )
+    comprobar_valor(
+        "etiqueta del clima muestra LLUVIA",
+        etiquetas[Accion.CLIMA],
+        "Clima: LLUVIA",
     )
 
     vista = Vista(pygame.display.get_surface())
@@ -624,6 +667,52 @@ def flujo_estadio() -> None:
     menus.procesar_tecla(pygame.K_ESCAPE)
     comprobar(
         "ESC en estadio regresa a opciones",
+        menus.pantalla,
+        Pantalla.OPCIONES,
+    )
+
+
+def flujo_palmares() -> None:
+    """El palmarés muestra tabla, historial y trofeos de la campaña."""
+    menus = nueva()
+    menus._ejecutar(Accion.OPCIONES)
+    menus._ejecutar(Accion.PALMARES)
+    comprobar("opciones -> palmarés", menus.pantalla, Pantalla.PALMARES)
+
+    # Se anota una victoria 3-0 en el nivel 5 y el palmarés la refleja.
+    juego = Juego(None)
+    juego.nivel = 5
+    juego.goles_local = 3
+    juego.goles_visitante = 0
+    registrar_resultado(menus, juego)
+
+    superficie = pygame.Surface((ANCHO, ALTO))
+    try:
+        menus.dibujar(superficie)
+        print("ok     el palmarés se dibuja sin errores")
+    except Exception as error:  # noqa: BLE001
+        print(f"FALLO  palmarés en pantalla: {error}")
+        fallos.append("palmarés en pantalla")
+
+    comprobar_valor(
+        "la tabla da tres puntos por la victoria",
+        menus.tabla_posiciones.fila("local").puntos,
+        3,
+    )
+    comprobar_valor(
+        "el historial guarda el resultado",
+        menus.historial[0].nivel,
+        5,
+    )
+    comprobar_valor(
+        "la goleada desbloquea tres trofeos",
+        len(menus.trofeos),
+        3,
+    )
+
+    menus.procesar_tecla(pygame.K_ESCAPE)
+    comprobar(
+        "ESC en palmarés regresa a opciones",
         menus.pantalla,
         Pantalla.OPCIONES,
     )
@@ -662,6 +751,163 @@ def flujo_cambio_jugador() -> None:
         fallos.append("cambio con posesión local")
 
 
+def flujo_corner() -> None:
+    """El córner se pita al tocar el defensor y se cobra en el vértice."""
+    vista = Vista(pygame.display.get_surface())
+    juego = Juego(vista)
+    juego.nueva_partida(con_silbato=False)
+
+    defensor = next(
+        jugador
+        for jugador in juego.jugadores
+        if jugador.equipo is Equipo.VISITANTE
+        and jugador.rol is Rol.DEFENSA
+    )
+    juego.ultimo_tocador = defensor
+    juego.balon.pos.update(CAMPO_RECT.right - 5, CAMPO_RECT.top + 40)
+    juego.balon.vel.update(500.0, 0.0)
+    juego.actualizar_balon(1 / 60)
+    comprobar_valor(
+        "el defensor provoca el córner",
+        juego.estado,
+        Estado.CORNER,
+    )
+    comprobar_valor("el córner es para el local", juego.esquina, Equipo.LOCAL)
+
+    superficie = pygame.Surface((ANCHO, ALTO))
+    try:
+        vista.dibujar(juego)
+        print("ok     la cartela de córner se dibuja sin errores")
+    except Exception as error:  # noqa: BLE001
+        print(f"FALLO  cartela de córner: {error}")
+        fallos.append("cartela de córner")
+
+    juego.procesar_tecla(pygame.K_SPACE)
+    comprobar_valor(
+        "ESPACIO cobra el córner",
+        juego.estado,
+        Estado.JUGANDO,
+    )
+    comprobar_valor(
+        "el balón queda en el vértice de la esquina",
+        (round(juego.balon.pos.x), round(juego.balon.pos.y)),
+        (CAMPO_RECT.right - RADIO_BALON, CAMPO_RECT.top + RADIO_BALON),
+    )
+
+
+def flujo_ia() -> None:
+    """La IA aprende, busca espacios, contraataca y cambia de táctica."""
+    juego = Juego(None)
+    juego.nueva_partida(con_silbato=False)
+    control = juego.jugador_controlado
+
+    # Juego colectivo: dos compañeros buscan espacios al portador.
+    juego.dar_posesion(control)
+    juego.balon.pos.update(CAMPO_RECT.centerx, CAMPO_RECT.centery)
+    control.pos.update(CAMPO_RECT.centerx, CAMPO_RECT.centery)
+    juego._actualizar_decisiones()
+    comprobar_valor(
+        "dos compañeros buscan espacios para recibir",
+        len(juego._apoyos),
+        2,
+    )
+
+    # IA adaptativa: aprende el lado por el que más atacas.
+    juego.balon.pos.update(CAMPO_RECT.centerx, CAMPO_RECT.bottom - 60)
+    for _ in range(320):
+        juego._observar_estilo(1 / 60)
+    comprobar_valor(
+        "la IA se corre hacia el lado que más atacas",
+        juego._sesgo_lateral > 0.0,
+        True,
+    )
+
+    # Contraataque: robo arriba con la defensa lanzada.
+    ladron = next(
+        jugador
+        for jugador in juego.jugadores
+        if jugador.equipo is Equipo.VISITANTE
+        and jugador.rol is Rol.MEDIO
+    )
+    juego.balon.pos.update(CAMPO_RECT.left + 60, CAMPO_RECT.centery)
+    for jugador in juego.jugadores:
+        if (
+            jugador.equipo is Equipo.LOCAL
+            and jugador.rol is not Rol.PORTERO
+            and jugador is not control
+        ):
+            jugador.pos.update(CAMPO_RECT.right - 80, CAMPO_RECT.centery)
+
+    juego.dar_posesion(control)
+    juego.dar_posesion(ladron)
+    comprobar_valor(
+        "el robo con espacios activa el contraataque",
+        juego._en_contraataque,
+        True,
+    )
+
+    # Cambios tácticos: perdiendo en el segundo tiempo pasa a remontada.
+    juego.mitad = 2
+    juego.goles_local = 1
+    juego._revisar_tactica_visitante()
+    comprobar_valor(
+        "la rival cambia de formación al ir perdiendo",
+        juego._formacion_visitante,
+        FORMACION_REMONTADA,
+    )
+
+
+def flujo_presentacion() -> None:
+    """Cámara, viento, animaciones y marcador televisivo en acción."""
+    vista = Vista(pygame.display.get_surface())
+    juego = Juego(vista)
+    juego.nueva_partida(con_silbato=False)
+
+    # Cámara: hace zoom cuando el balón corre junto al arco.
+    juego.balon.pos.update(CAMPO_RECT.right - 30, CAMPO_RECT.centery)
+    juego.balon.vel.update(600.0, 0.0)
+    vista.dibujar(juego)
+    vista.dibujar(juego)
+    comprobar_valor(
+        "la cámara hace zoom con el balón en carrera",
+        vista._camara_rect().width < ANCHO,
+        True,
+    )
+
+    # Viento y confeti se dibujan sin errores.
+    juego.viento.update(30.0, 0.0)
+    superficie = pygame.Surface((ANCHO, ALTO))
+    try:
+        vista.dibujar(juego)
+        print("ok     cámara, confeti y viento se dibujan sin errores")
+    except Exception as error:  # noqa: BLE001
+        print(f"FALLO  presentación: {error}")
+        fallos.append("presentación")
+
+    # Animaciones: un gol enciende la grada y hace saltar a los suyos.
+    control = juego.jugador_controlado
+    juego.dar_posesion(control)
+    control.pos.update(CAMPO_RECT.right - 20, PORTERIA_CENTRO)
+    control.actualizar_rect()
+    control.direccion.update(1, 0)
+    juego.actualizar_balon(1 / 60)
+    comprobar_valor("el gol enciende a la grada", juego.emocion_grada > 0.9, True)
+    juego.avanzar_animaciones(0.1)
+    comprobar_valor(
+        "los goleadores celebran saltando",
+        juego.jugador_controlado.salto_restante > 0.0,
+        True,
+    )
+
+    # Marcador televisivo: franjas con los colores de cada camiseta.
+    marcador = vista._crear_superficie_marcador(juego)
+    comprobar_valor(
+        "el marcador lleva el color del local",
+        marcador.get_at((2, marcador.get_height() // 2))[:3],
+        juego.uniformes[Equipo.LOCAL].camiseta,
+    )
+
+
 def main() -> None:
     pygame.init()
     pygame.display.set_mode((ANCHO, ALTO))
@@ -678,7 +924,11 @@ def main() -> None:
     flujo_editor_en_partido()
     flujo_repeticion()
     flujo_estadio()
+    flujo_palmares()
     flujo_cambio_jugador()
+    flujo_corner()
+    flujo_ia()
+    flujo_presentacion()
 
     pygame.quit()
 

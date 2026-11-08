@@ -6,8 +6,9 @@ sprint con energía, atajadas, marcaje, un partido de dos tiempos de
 3 minutos, menús ilustrados con botones clicables, una campaña de
 niveles, la personalización del escudo del jugador, uniformes
 personalizados, un editor de jugadores con nombres, dorsales,
-atributos y posiciones, y tácticas con cuatro formaciones seleccionables
-(4-4-2, 4-3-3, 3-5-2 y 5-3-2).
+atributos y posiciones, tácticas con cuatro formaciones seleccionables
+(4-4-2, 4-3-3, 3-5-2 y 5-3-2) y un banquillo de suplentes con
+sustituciones en vivo desde la pausa.
 
 ## Campaña de niveles
 
@@ -95,6 +96,33 @@ saque al centro; también queda fijada para las partidas que se inicien
 después. Tras elegir una formación se puede seguir ajustando el detalle
 de cada jugador en el editor de posiciones.
 
+## Suplentes y sustituciones
+
+La plantilla completa son **18 jugadores por equipo** (formato 18-23 del
+fútbol): los once titulares que se ven en el editor más un **banquillo
+de 7 suplentes** con dorsales del 12 al 18 — un portero, dos defensas,
+dos medios y dos delanteros. Los suplentes comparten el sistema del
+editor: cada uno tiene su nombre, dorsal, rol y atributos por defecto,
+y el tamaño del banquillo es ajustable en `configuracion.py`
+(`NUMERO_SUPLENTES`, hasta 12 para un acta de 23).
+
+Los cambios se hacen desde el partido: `ESC` abre la pausa y el botón
+**Cambios de jugadores** muestra la pantalla de sustituciones, con los
+once jugadores en campo a la izquierda y el banquillo disponible a la
+derecha. Se marca al que sale y al que entra (con clic o con el teclado,
+segundo toque para desmarcar) y el botón **Confirmar** ejecuta el
+cambio; la pareja elegida queda resaltada y cada equipo dispone de
+**5 cambios por partido** (tope ajustable con `SUSTITUCIONES_MAXIMAS`).
+
+El sustituto hereda el hueco táctico del que sale (rol y posición),
+conservando su nombre, su dorsal y sus atributos, y el que sale pasa al
+banquillo (no puede volver a entrar este partido, como en el fútbol
+real, porque ya no está disponible en la lista de suplentes). El cambio
+se aplica en el momento sin cortar la jugada: si el que salía era el
+jugador controlado o llevaba el balón, el control y la posesión pasan al
+que entra. Al empezar o reiniciar una partida el banquillo y el cupo de
+cambios vuelven a su estado original.
+
 ## Repeticiones de gol
 
 Cada gol se revive en cámara lenta: durante el partido se graba de forma
@@ -141,6 +169,9 @@ vista previa en vivo del conjunto:
   con un tono azulado).
 - **Momento:** de día, a plena luz, o de noche, con todo el estadio
   atenuado y el público apagado.
+- **Clima:** despejado, lluvia o nieve. No es solo visual: con lluvia
+  el balón rueda más (menos fricción) y con nieve se frena antes. La
+  lluvia dibuja chubascos sobre el campo y la nieve, copos a la deriva.
 - **Gradas:** con aficionados sentados alrededor de la cancha o un
   cordón de césped vacío. El público se genera con una semilla fija,
   así que cada estadio se ve igual en todas las partidas.
@@ -151,8 +182,8 @@ El estadio elegido se aplica al iniciar o reiniciar una partida: el
 fondo se pre-renderiza una sola vez por configuración, así que no
 cuesta nada por fotograma. También queda guardado en la base de datos
 junto al resto de la personalización. La opción en curso se marca en
-la etiqueta de cada botón y las flechas ←/→ ajustan césped, momento y
-diseño hacia atrás o adelante.
+la etiqueta de cada botón y las flechas ←/→ ajustan césped, momento,
+clima y diseño hacia atrás o adelante.
 
 ## Porteros inteligentes
 
@@ -171,6 +202,122 @@ seguro pero no perfecto. Cuando un portero "falla" un disparo, se lanza
 igualmente —al sitio equivocado— y el balón se le escapa entre las
 manos. Los ajustes de lances y errores están en `configuracion.py` y
 las calidades por nivel en `porteros.py`.
+
+## Estadísticas y palmarés
+
+**Estadísticas del partido:** en el descanso y en el final, el panel
+del mensaje muestra las cifras del encuentro de los dos equipos:
+posesión (porcentaje de tiempo con el balón controlado), disparos,
+pases (incluidos los despejes de los porteros) y atajadas. Los goles
+están siempre en el marcador.
+
+**Palmarés de la campaña** (**Opciones → Palmarés**), en tres columnas:
+
+- **Posiciones:** la tabla de la campaña con TU CLUB y los 11 rivales:
+  puntos (3 por victoria, 1 por empate), victorias, empates y derrotas,
+  goles a favor y en contra, ordenada por puntos y diferencia.
+- **Resultados:** el historial de los últimos partidos (nivel y
+  marcador final), del más reciente al más viejo.
+- **Trofeos:** los premios por logros — PRIMERA VICTORIA, GOLEADA
+  (ganar por 3 o más), VALLA INVICTA, ARTILLERO (5 goles en un
+  partido) y CAMPEÓN (completar la campaña ganando el nivel 11). Los
+  logrados se muestran en oro y los que faltan, apagados.
+
+Todo se registra automáticamente: al terminar un partido se actualizan
+tabla, historial y trofeos (los nuevos se anuncian en el panel del
+final), y la campaña continúa en el nivel donde quedó entre sesiones.
+El guardado automático lo conserva todo en la base SQLite junto con
+las personalizaciones.
+
+## Narrador y repeticiones a demanda
+
+Cada gol lleva su **comentario**: bajo el "¡GOOOL!" aparece una frase
+del narrador con el nombre del autor (quien tocó el balón por última
+vez antes de cruzar la línea), elegida entre varias variantes.
+
+Además de la repetición automática de cada gol, con **R** (en juego
+corriente) se vuelve a ver en cámara lenta la **última mejor jugada**
+guardada: el partido se congela tal como está, se reproduce la jugada
+con la cartela REPETICIÓN y, al terminar (o con ESPACIO), todo vuelve
+exactamente a como estaba. Siempre están a mano las tres últimas.
+
+## IA más impredecible
+
+La rival ya no repite el mismo guion partido tras partido:
+
+- **IA adaptativa:** cada 5 segundos muestrea tu estilo y ajusta su
+  bloque: se corre hacia el lado por el que más atacas y, si disparas
+  con frecuencia, presiona con un jugador más.
+- **Contraataques:** al robar cerca de tu arco con la defensa lanzada,
+  sale a la carrera: conduce más rápido y dispara desde más lejos
+  durante unos segundos.
+- **Cambios tácticos:** si va perdiendo en el segundo tiempo, pasa su
+  bloque a la formación remontada (4-3-3) hasta la siguiente jugada.
+- **Sustituciones:** los rivales se cansan persiguiendo y conduciendo
+  (corren hasta un 30 % menos agotados) y la IA rota al compañero más
+  fresco de su misma posición para cubrir la zona.
+- **Marcaje individual:** cada defensa sigue siempre al mismo rival
+  mientras sea válido; las parejas se heredan entre posesiones y solo
+  se cubren los huecos nuevos.
+- **Juego colectivo:** los dos compañeros más cercanos al portador
+  buscan espacios para recibir, adelantados hacia el arco y abiertos a
+  banda (también los tuyos, cuando la IA conduce por ti).
+
+## Presentación de transmisión
+
+- **Marcador televisivo:** el marcador es un bug de transmisión, con
+  el escudo de cada equipo, el resultado en grande, el nivel y el
+  rival debajo, un punto rojo de "EN VIVO" y una franja en el borde
+  con el color de la camiseta de cada equipo.
+- **Cámara dinámica:** el encuadre persigue al balón con suavizado y
+  hace zoom cuando corre a toda velocidad o ronda las áreas; en juego
+  tranquilo vuelve al plano completo. Los marcadores y mensajes
+  siempre se ven enteros, como en televisión.
+- **Animaciones:** los jugadores zancan al correr (la fase avanza con
+  los pasos), saltan para celebrar los goles y caen al suelo cuando
+  les roban el balón o cuando son batidos.
+- **Reacciones del portero:** atrapa de pie y celebra con un salto;
+  si atrapa en pleno lance, cae al suelo; y cuando le marcan, se queda
+  tumbado un buen rato.
+- **Aficionados reaccionan:** la grada estalla con los goles y
+  vitorea las ocasiones (atajadas): confeti animado en las tribunas
+  cuya intensidad sube con la emoción y se apaga poco a poco.
+- **Clima avanzado:** el viento cambia de dirección y fuerza de vez en
+  cuando (según el clima: más tormenta, más viento) y empuja de verdad
+  la trayectoria del balón libre; un indicador junto al reloj muestra
+  hacia dónde sopla.
+
+## Modos de juego
+
+En **JUGAR** se abre el selector de **modos de juego**; la campaña es
+el primero y el resto son nuevos:
+
+- **Campaña:** los once niveles clásicos, uno tras otro.
+- **Liga:** todos contra todos en 11 jornadas por puntos (3 por
+  victoria, 1 por empate). Los demás partidos de cada jornada se
+  simulan por la fuerza de cada equipo, así que la clasificación es
+  una tabla real; el texto final muestra tu posición y el campeón.
+- **Copa:** eliminación directa de 8 equipos (cuartos, semifinal y
+  final). Un empate se decide por penaltis.
+- **Copa de Campeones:** dos grupos de 4; los dos primeros de cada
+  uno pasan a las semifinales cruzadas y luego a la gran final.
+- **Supervivencia:** gana y el rival sube de nivel; pierde (o empata)
+  y se acaba el intento, con tu racha como récord.
+- **Entrenamiento:** campo abierto sin oposición ni reloj para
+  practicar tiros, pases y regates contra el portero.
+- **Dos jugadores:** dos personas en el mismo teclado. Jugador 1:
+  WASD, SHIFT izquierdo, ESPACIO y E; jugador 2: flechas, SHIFT
+  derecho, ENTER y CTRL derecho, cada uno con su barra de energía.
+
+En los torneos, el marcador muestra la competición y la ronda en
+curso (LIGA · J3/11, COPA · SEMIFINAL, ...), la pantalla final resume
+tu situación y, al terminar el torneo, su desenlace antes de volver
+al menú. Los torneos **se guardan en la base de datos** (tabla
+`torneos`): al elegir un modo se reanuda el torneo guardado de ese
+modo en el punto donde estaba —jornada, ronda, clasificación o
+racha— y, una vez terminado, se borra para que el siguiente empiece
+de cero. Como solo hay un torneo activo por modo, puedes tener una
+Liga a medias y una Copa a medias a la vez.
 
 ## Requisitos
 
@@ -223,6 +370,7 @@ genera localmente en `dist/` con el script anterior.
 | `ESPACIO` | Chutar / avanzar tras un gol (celebración → repetición → saque), descanso o final |
 | `E` | Pasar al compañero más cercano |
 | `Q` | Cambiar el jugador controlado (cicla entre los locales por cercanía al balón) |
+| `R` | Volver a ver en cámara lenta la última mejor jugada |
 | `ESC` | En partido abre la pausa; en menús vuelve o sale |
 | Ratón | Elegir y pulsar los botones de los menús |
 | Flechas o `W/S` | Elegir una opción en los menús |
@@ -256,11 +404,24 @@ posesión local el control acompaña siempre a quien lleva el balón.
 
 ## Reglas
 
-- El balón rebota en las bandas y en los fondos; no hay saques de banda
-  ni de esquina.
+- El balón rebota en las bandas. En las líneas de fondo: gol si entra
+  por la portería, córner si sale tras tocar al equipo defensor y
+  rebote en cualquier otro caso (no hay saques de banda ni de puerta).
 - Un gol se cuenta cuando el balón toca la línea de gol dentro de la
   portería.
 - No hay fuera de juego, faltas ni tarjetas.
+
+## Saques de esquina
+
+Cuando el balón sale por una línea de fondo y el último toque fue de
+un jugador del equipo que defiende ese arco, se pita **córner**: suena
+el silbato, aparece la cartela CÓRNER y la jugada se congela un
+instante. Después el balón se coloca en el vértice de la esquina por
+la que salió (izquierda o derecha, arriba o abajo) y el jugador de
+campo más cercano del equipo que cobra se sitúa junto a él para sacar
+conduciendo; si el córner es del local, tomas tú el control del
+cobrador. ESPACIO adelanta la colocación sin esperar la pausa. Si el
+último toque fue del equipo atacante, el balón simplemente rebota.
 
 ## Menús y pantallas
 
@@ -284,22 +445,26 @@ el teclado.
   configuración; CÓMO JUGAR muestra los controles y los indicadores;
   SALIR cierra el juego.
 - **Pausa:** se abre con `ESC` durante el partido. Permite continuar,
-  reiniciar el partido, abrir la configuración o volver al menú
-  principal.
+  reiniciar el partido, abrir la configuración, volver al menú
+  principal o hacer cambios de jugadores (sustituciones).
 - **Opciones:** activa o desactiva los efectos de sonido (se aplica al
   instante y se conserva mientras el juego esté abierto), abre la
   elección de tácticas, la de uniformes, la del escudo, el editor de
-  jugadores y la del estadio, o vuelve atrás.
+  jugadores, la del estadio y el palmarés, o vuelve atrás.
 - **Tácticas:** elige la formación del equipo (4-4-2, 4-3-3, 3-5-2 o
   5-3-2) con vista previa del campo; la formación en uso queda marcada.
 - **Estadio:** personaliza el césped (claro, oscuro o artificial), el
-  momento (día o noche), las gradas con aficionados y el diseño de
-  corte de la cancha, con vista previa en vivo.
+  momento (día o noche), el clima (despejado, lluvia o nieve), las
+  gradas con aficionados y el diseño de corte de la cancha, con vista
+  previa en vivo.
+- **Palmarés:** la tabla de posiciones de la campaña, el historial de
+  resultados y los trofeos desbloqueados.
 - **Cómo jugar:** resume los controles, los indicadores en pantalla y
   las reglas del partido.
 
 `ESC` también funciona como botón "volver" en las pantallas de
-configuración, ayuda, escudo, uniformes, editor, tácticas y estadio. La navegación usa una
+configuración, ayuda, escudo, uniformes, editor, tácticas, estadio y
+palmarés. La navegación usa una
 pila: cada pantalla guarda de dónde se llegó, así que `Volver` o `ESC`
 regresan siempre a la pantalla anterior aunque se hayan encadenado
 varias (por ejemplo Pausa → Opciones → Editor); volver deshace la ruta
@@ -333,7 +498,8 @@ futbol-silueta/
 │   ├── test_aplicacion.py      # Pruebas del bucle y las pantallas
 │   ├── test_escudos.py         # Pruebas de escudos y personalización
 │   ├── test_guardado.py        # Pruebas de la base de datos SQLite
-│   └── test_porteros.py        # Pruebas de los porteros inteligentes
+│   ├── test_porteros.py        # Pruebas de los porteros inteligentes
+│   └── test_modos.py           # Pruebas de liga, copa y demás modos
 └── futbol_silueta/
     ├── __init__.py
     ├── configuracion.py        # Constantes, colores, formación y textos
@@ -345,7 +511,9 @@ futbol-silueta/
     ├── uniformes.py            # Equipaciones, dorsales y figura del jugador
     ├── plantilla.py            # Fichas de jugadores: nombres, dorsal y atributos
     ├── porteros.py             # IA de porteros: anticipación, lances y errores
+    ├── modos.py                # Modos de juego: liga, copa, campeones, etc.
     ├── repeticion.py           # Instantes congelados para repetir goles
+    ├── estadisticas.py         # Cifras del partido, tabla, historial y trofeos
     ├── estadios.py             # Césped, momento, gradas y diseño de cancha
     ├── niveles.py              # Niveles de la campaña y dificultad
     ├── vista.py                # Todo el dibujo de la partida
@@ -357,8 +525,10 @@ futbol-silueta/
 ## Pruebas
 
 La suite usa SDL en modo headless, así que no abre ventana ni necesita
-audio real. Incluye 84 pruebas de simulación, porteros inteligentes,
-repeticiones de gol, cambio de jugador,
+audio real. Incluye 149 pruebas de simulación, modos de juego, IA adaptativa
+y táctica rival, presentación de transmisión, porteros inteligentes,
+repeticiones de gol, cambio de jugador, córners, estadísticas,
+palmarés y clima, suplentes y sustituciones, banquillo por defecto,
 estadios, menús, botones, tácticas, guardado, bucle principal, escudos,
 utilidades (carga de imágenes con reserva y plantillas incompletas)
 y dibujo:
@@ -366,6 +536,10 @@ y dibujo:
 ```bash
 python -m unittest discover -s tests -t . -v
 ```
+
+Si necesitas capturar la salida en PowerShell con `2>&1`, hazlo dentro
+de `cmd /c`: `unittest` escribe su progreso en `stderr` y PowerShell 5.1
+puede interpretarlo como un error aunque la suite termine bien.
 
 También se pueden ejecutar los archivos de pruebas directamente:
 
@@ -376,10 +550,12 @@ python tests/test_aplicacion.py
 ```
 
 Además, `verificar_navegacion.py` recorre a mano los flujos de menús,
-uniformes, editor, repeticiones, estadio y cambio de jugador (la pila
-de vuelta, ESC en cada pantalla, el ciclado de colores por prenda, la
-edición de nombres y dorsales, los ajustes de velocidad y fuerza, y la
-llegada de uniformes, fichas y estadio a los jugadores):
+uniformes, editor, repeticiones, estadio, palmarés, córners, IA
+adaptativa y cambio de jugador (la pila de vuelta, ESC en cada
+pantalla, el ciclado de colores por prenda, la edición de nombres y
+dorsales, los ajustes de velocidad y fuerza, el clima, el
+re-visionado con R y la llegada de uniformes, fichas y estadio a los
+jugadores):
 
 ```bash
 python verificar_navegacion.py
@@ -387,6 +563,58 @@ python verificar_navegacion.py
 
 ## Cambios de esta versión
 
+- Se añadieron los modos de juego: JUGAR abre un selector con la
+  campaña clásica y seis modos nuevos —Liga por puntos con jornada y
+  clasificación simulada, Copa de eliminación directa, Copa de
+  Campeones con grupos y finales, Supervivencia de dificultad
+  creciente, Entrenamiento sin oposición ni reloj y Dos jugadores en
+  el mismo teclado con energías separadas.
+- En los torneos el marcador muestra la ronda en curso y la pantalla
+  final narra la situación; el desenlace del torneo se muestra antes
+  de volver al menú principal.
+- Los torneos se guardan en la base de datos y se reanudan al volver
+  a elegir su modo: jornada y clasificación de la Liga, ronda de la
+  Copa, fase y grupos de Campeones y racha de Supervivencia.
+- Se añadieron los suplentes y las sustituciones: plantilla de 18
+  jugadores (11 titulares + banquillo de 7, ampliable hasta 23) y
+  cambios en vivo desde la pausa con la pantalla Cambios de jugadores,
+  con tope de 5 cambios por equipo, transferencia del control y del
+  balón al que entra y banquillo que se restablece en cada partido.
+- Se añadió la presentación de transmisión: marcador televisivo con
+  colores de equipo y aviso EN VIVO, cámara dinámica con zoom y
+  seguimiento del balón, animaciones de carrera, salto y caída,
+  celebraciones de gol, reacciones del portero según la atajada,
+  aficionados que reaccionan a goles y ocasiones con confeti, y viento
+  dinámico que desvía el balón según el clima.
+
+- Se renovó la IA para hacer los partidos menos predecibles: aprende
+  tu estilo (lado de ataque y frecuencia de disparo) y ajusta presión
+  y bloque lateral; sale al contraataque cuando roba con espacios;
+  cambia a la formación remontada al ir perdiendo; rota a sus
+  jugadores cansados, que corren menos según se agotan; marca a un
+  rival fijo por defensa y sus compañeros buscan espacios para
+  recibir pases.
+- Se añadieron los saques de esquina: si el balón sale por la línea de
+  fondo tras tocar al equipo defensor, se pita córner con su cartela y
+  el balón se coloca en el vértice para que cobre el jugador del equipo
+  atacante más cercano; con ESPACIO se adelanta la colocación.
+- Se añadieron las estadísticas del partido: posesión, disparos, pases
+  y atajadas de los dos equipos, mostradas en el panel del descanso y
+  del final (los goles, en el marcador).
+- Se añadió el palmarés de la campaña en Opciones → Palmarés: tabla de
+  posiciones con puntos, victorias, empates y derrotas contra los 11
+  rivales, historial de los últimos resultados y sistema de trofeos
+  (PRIMERA VICTORIA, GOLEADA, VALLA INVICTA, ARTILLERO y CAMPEÓN).
+- Se añadió el narrador: cada gol muestra un comentario aleatorio con
+  el nombre del autor bajo el mensaje de gol.
+- Con `R` se vuelve a ver en cámara lenta la última mejor jugada: el
+  partido se congela y se restaura exactamente tras la repetición.
+- El guardado automático conserva ahora también la campaña (nivel en
+  curso), la tabla, el historial y los trofeos; las bases anteriores se
+  migran solas.
+- Se añadió el clima dinámico al estadio: despejado, lluvia o nieve,
+  con partículas sobre el campo y fricción del balón distinta por
+  clima (con lluvia rueda más, con nieve se frena antes).
 - Se añadió el cambio manual de jugador: con `Q` el control pasa al
   siguiente jugador de campo local más cercano al balón (la primera
   pulsación toma al más conveniente y el ciclo da la vuelta completa);
@@ -425,6 +653,13 @@ python verificar_navegacion.py
 - La base de datos se crea sola en el primer arranque y es tolerante a
   fallos: si el archivo está dañado o bloqueado, el juego sigue
   funcionando con los valores en memoria.
+- La carga sanea cada campo por separado: los colores fuera de rango se
+  recortan a 8 bits, las opciones o formaciones desconocidas usan su
+  valor por defecto y una plantilla corta o con fichas dañadas se
+  completa sin descartar las fichas válidas ni el resto de los ajustes.
+- La miniatura del estadio y el cursor del ratón se cachean: la vista
+  previa solo se repinta al cambiar el estadio y el cursor solo se
+  actualiza cuando su estado realmente cambia.
 - Se añadieron las repeticiones de gol: el partido graba en continuo los
   últimos 4 segundos y, tras la celebración, revive la jugada completa
   en cámara lenta (0,4×) con la cartela REPETICIÓN; ESPACIO la salta y

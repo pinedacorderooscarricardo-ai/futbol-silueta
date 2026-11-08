@@ -16,10 +16,13 @@ from .configuracion import (
     MAX_PASOS_FISICA,
     NEGRO,
     TITULO_VENTANA,
+    Estado,
 )
 from .juego import Juego
+from .estadisticas import registrar_resultado
 from .guardado import Guardado
 from .menus import Accion, Menus, Pantalla
+from .modos import ModoJuego, Solicitud
 from .vista import Vista
 
 
@@ -49,6 +52,8 @@ class Aplicacion:
         # Base de datos con la configuración y la plantilla guardadas.
         self.guardado = guardado if guardado is not None else Guardado()
         self.guardado.cargar_en(self.menus)
+        # La campaña continúa donde quedó la sesión anterior.
+        self.juego.adoptar_nivel(self.guardado.nivel_guardado())
 
         # Medidor de rendimiento (se activa con F3; no cuesta nada apagado).
         self.mostrar_rendimiento = False
@@ -96,9 +101,10 @@ class Aplicacion:
                 pygame.display.flip()
                 self._medir_dibujo(inicio)
         finally:
-            # Al cerrar, por cualquier vía, quedan guardados los ajustes
-            # y la plantilla tal como están los menús.
-            self.guardado.guardar_desde(self.menus)
+            # Al cerrar, por cualquier vía, quedan guardados los ajustes,
+            # la plantilla, la campaña, el palmarés y el torneo en curso.
+            self.guardado.guardar_desde(self.menus, self.juego.nivel)
+            self.guardado.guardar_torneo(self.juego.modo, self.juego.torneo)
             self.guardado.cerrar()
 
     def _medir_simulacion(self, inicio: float, pasos: int) -> None:
@@ -139,12 +145,46 @@ class Aplicacion:
 
         self._ejecutar_accion_pendiente()
 
+        # El partido puede pedir volver al menú (fin de torneo, racha).
+        if self.juego.solicitud is Solicitud.MENU_PRINCIPAL:
+            self.juego.solicitud = None
+            self.menus.abrir_menu_principal()
+
     def actualizar(self, dt: float) -> None:
         """Avanza el partido solo cuando la pantalla de juego está activa."""
         self.juego.sonidos.habilitado = self.menus.sonido_activado
 
+        # Las animaciones (saltos, caídas, celebraciones) corren en
+        # cualquier estado para que el gol se siga celebrando.
+        self.juego.avanzar_animaciones(dt)
+
         if self.menus.pantalla is Pantalla.PARTIDO:
             self.juego.actualizar(dt)
+
+            # Guardado automático del resultado: el final del partido se
+            # registra una sola vez (tabla, historial y trofeos).
+            if (
+                self.juego.estado is Estado.FINAL
+                and not self.juego.resultado_registrado
+            ):
+                self._registrar_resultado()
+
+    def _registrar_resultado(self) -> None:
+        """Anota el partido terminado y anuncia sus trofeos nuevos.
+
+        Solo la campaña alimenta la tabla de la campaña, el historial
+        y los trofeos: en los torneos los rivales son los del circuito,
+        pero sus partidos no cuentan como campaña.
+        """
+        juego = self.juego
+        juego.resultado_registrado = True
+        if juego.modo is ModoJuego.CAMPANA:
+            nuevos = registrar_resultado(self.menus, juego)
+        else:
+            nuevos = []
+        juego.trofeos_nuevos = [trofeo.nombre for trofeo in nuevos]
+        self.guardado.guardar_desde(self.menus, juego.nivel)
+        self.guardado.guardar_torneo(self.juego.modo, self.juego.torneo)
 
     def dibujar(self) -> None:
         """Dibuja el partido o la pantalla de menú actual."""
@@ -201,10 +241,19 @@ class Aplicacion:
         self.juego.sonidos.habilitado = self.menus.sonido_activado
         accion = self.menus.consumir_accion()
 
-        if accion in (Accion.JUGAR, Accion.REINICIAR):
+        if accion is Accion.JUGAR:
+            self.menus.reiniciar_sustituciones()
+            self._aplicar_preferencias()
+            modo = self.menus.modo_seleccionado
+            # Reanuda el torneo guardado de ese modo, si lo hay.
+            self.juego.iniciar_modo(modo, self.guardado.cargar_torneo(modo))
+            self.guardado.guardar_torneo(modo, self.juego.torneo)
+            self.guardado.guardar_desde(self.menus, self.juego.nivel)
+        elif accion is Accion.REINICIAR:
+            self.menus.reiniciar_sustituciones()
             self._aplicar_preferencias()
             self.juego.nueva_partida()
-            self.guardado.guardar_desde(self.menus)
+            self.guardado.guardar_desde(self.menus, self.juego.nivel)
         elif accion is Accion.FORMACION:
             # Las fichas ya llegan recolocadas desde el menú de
             # tácticas: solo falta recrear a los jugadores en el campo.
@@ -214,3 +263,26 @@ class Aplicacion:
             self.juego.cambiar_formacion(self.menus.formacion_nombre)
         elif accion is Accion.SALIR:
             self.ejecutando = False
+
+        self._aplicar_sustitucion_pendiente()
+
+    def _aplicar_sustitucion_pendiente(self) -> None:
+        """Reemplaza en el campo al jugador de un cambio confirmado.
+
+        Se llama en cada fotograma de eventos: el menú deja la pareja
+        lista y aquí se recrea al jugador sin cortar la jugada.
+        """
+        sustitucion = self.menus.consumir_sustitucion()
+
+        if sustitucion is None:
+            return
+
+        equipo, hueco, _dorsal_saliente, ficha_entrante = sustitucion
+        self.juego.sustituir(
+            equipo,
+            hueco,
+            ficha_entrante,
+        )
+        self.juego.personalizar_plantillas(
+            self.menus.plantillas_seleccionadas
+        )

@@ -15,7 +15,7 @@ from typing import NamedTuple, TypeVar
 
 import pygame
 
-from .configuracion import Color
+from .configuracion import Color, FRICCION
 
 T = TypeVar("T")
 
@@ -48,6 +48,14 @@ class Diseno(StrEnum):
     CIRCULOS = "circulos"
 
 
+class Clima(StrEnum):
+    """Condiciones del partido: también cambian cómo rueda el balón."""
+
+    DESPEJADO = "despejado"
+    LLUVIA = "lluvia"
+    NIEVE = "nieve"
+
+
 class Estadio(NamedTuple):
     """Configuración completa de un estadio."""
 
@@ -55,6 +63,7 @@ class Estadio(NamedTuple):
     momento: Momento
     diseno: Diseno
     gradas: bool
+    clima: Clima = Clima.DESPEJADO
 
 
 ESTADIO_POR_DEFECTO = Estadio(
@@ -77,6 +86,23 @@ DISENOS: tuple[Diseno, ...] = (
     Diseno.AJEDREZ,
     Diseno.CIRCULOS,
 )
+CLIMAS: tuple[Clima, ...] = (Clima.DESPEJADO, Clima.LLUVIA, Clima.NIEVE)
+
+# Fricción base del balón según el clima: con lluvia rueda más (menos
+# rozamiento) y con nieve se frena antes que en un día despejado.
+FRICCION_CLIMA: dict[Clima, float] = {
+    Clima.DESPEJADO: FRICCION,
+    Clima.LLUVIA: 0.992,
+    Clima.NIEVE: 0.975,
+}
+
+# Fuerza máxima del viento (px/s²) según el clima: la tormenta empuja
+# el triple que una tarde despejada.
+VIENTO_POR_CLIMA: dict[Clima, float] = {
+    Clima.DESPEJADO: 14.0,
+    Clima.LLUVIA: 34.0,
+    Clima.NIEVE: 22.0,
+}
 
 # Nombres con acentos para las etiquetas de los menús; el césped usa
 # ``value.upper()`` porque no lleva ninguno.
@@ -92,9 +118,19 @@ NOMBRES_DISENO: dict[Diseno, str] = {
 }
 
 
-def siguiente_opcion(opciones: tuple[T, ...], actual: T) -> T:
-    """La opción siguiente a ``actual``, dando la vuelta a la lista."""
-    return opciones[(opciones.index(actual) + 1) % len(opciones)]
+def siguiente_opcion(opciones: tuple[T, ...], actual: T, paso: int = 1) -> T:
+    """La opción ``paso`` posiciones después de ``actual``, en ciclo."""
+    if not opciones:
+        return actual
+
+    try:
+        indice = opciones.index(actual)
+    except ValueError:
+        # Un valor inesperado (por ejemplo, cargado de una base dañada)
+        # no debe romper el ciclo: se entra por el extremo adecuado.
+        indice = 0
+
+    return opciones[(indice + paso) % len(opciones)]
 
 
 # ============================================================

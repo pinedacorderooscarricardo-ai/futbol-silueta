@@ -30,6 +30,15 @@ def cargar_escudo(nivel: int) -> pygame.Surface:
     return superficie
 
 
+def limpiar_cache() -> None:
+    """Vacía las imágenes de escudos guardadas.
+
+    Las superficies convertidas pertenecen al contexto gráfico en el que
+    se cargaron; tras reiniciar pygame hay que volver a cargarlas.
+    """
+    _IMAGENES.clear()
+
+
 class FormaEscudo(StrEnum):
     """Formas entre las que puede elegir el escudo del jugador."""
 

@@ -10,17 +10,21 @@ import pygame
 
 from .configuracion import (
     ALTO,
+    AMARILLO,
     ANCHO,
     BLANCO,
-    NEGRO,
     NOMBRES_FORMACION,
+    SUSTITUCIONES_MAXIMAS,
+    TITULARES_POR_EQUIPO,
     Color,
     Equipo,
     Rol,
 )
 from .escudos import ESCUDO_PRESETS, FORMAS_ESCUDO, Escudo, FormaEscudo
+from .modos import DESCRIPCIONES, ETIQUETAS, ModoJuego
 from .estadios import (
     CESPEDES,
+    CLIMAS,
     DISENOS,
     ESTADIO_POR_DEFECTO,
     MOMENTOS,
@@ -33,6 +37,13 @@ from .estadios import (
     dibujar_cesped,
     siguiente_opcion,
 )
+from .estadisticas import (
+    CLAVE_LOCAL,
+    TROFEOS,
+    Resultado,
+    TablaPosiciones,
+)
+from .niveles import nivel_por_numero
 from .plantilla import (
     LARGO_NOMBRE,
     PRESETS_FUERZA,
@@ -42,7 +53,10 @@ from .plantilla import (
     aplicar_formacion,
     nombre_fuerza,
     nombre_velocidad,
+    normalizar_plantilla,
+    plantilla_por_defecto,
     plantillas_por_defecto,
+    suplentes_por_defecto_todos,
 )
 from .uniformes import (
     UNIFORMES_POR_DEFECTO,
@@ -62,6 +76,7 @@ class Pantalla(StrEnum):
     """Pantallas que puede mostrar la aplicación."""
 
     PRINCIPAL = "principal"
+    MODOS = "modos"
     OPCIONES = "opciones"
     AYUDA = "ayuda"
     PARTIDO = "partido"
@@ -71,6 +86,8 @@ class Pantalla(StrEnum):
     EDITOR = "editor"
     TACTICA = "tactica"
     ESTADIO = "estadio"
+    PALMARES = "palmares"
+    SUSTITUCIONES = "sustituciones"
 
 
 class Accion(StrEnum):
@@ -103,11 +120,31 @@ class Accion(StrEnum):
     CICLAR_FUERZA = "ciclar_fuerza"
     CICLAR_ROL = "ciclar_rol"
     MOVER_POSICION = "mover_posicion"
+    SUSTITUCIONES = "sustituciones"
+    ELEGIR_SALE = "elegir_sale"
+    ELEGIR_ENTRA = "elegir_entra"
+    HACER_CAMBIO = "hacer_cambio"
     ESTADIO = "estadio"
+    PALMARES = "palmares"
     CESPED = "cesped"
     MOMENTO = "momento"
+    CLIMA = "clima"
     DISENO = "diseno"
     GRADAS = "gradas"
+    CAMPANA = "campana"
+    LIGA = "liga"
+    COPA = "copa"
+    CAMPEONES = "campeones"
+    SUPERVIVENCIA = "supervivencia"
+    ENTRENAMIENTO = "entrenamiento"
+    DOS_JUGADORES = "dos_jugadores"
+
+
+
+_ETIQUETAS_MODO: dict[ModoJuego, str] = ETIQUETAS
+_ACCION_DE_MODO: dict[ModoJuego, Accion] = {
+    modo: Accion(modo.value) for modo in ModoJuego
+}
 
 
 class Boton:
@@ -235,50 +272,70 @@ class Menus:
                         "Volver al menú principal",
                         Accion.MENU_PRINCIPAL,
                     ),
+                    (
+                        (428, 545, 552, 56),
+                        "Cambios de jugadores",
+                        Accion.SUSTITUCIONES,
+                    ),
                 ),
             ),
             Pantalla.OPCIONES: [
                 Boton(
-                    pygame.Rect(260, 334, 480, 36),
+                    pygame.Rect(260, 334, 480, 34),
                     "Sonido: ACTIVADO",
                     Accion.SONIDO,
                 ),
                 Boton(
-                    pygame.Rect(260, 372, 480, 36),
+                    pygame.Rect(260, 371, 480, 34),
                     "Tácticas",
                     Accion.TACTICA,
                 ),
                 Boton(
-                    pygame.Rect(260, 410, 480, 36),
+                    pygame.Rect(260, 408, 480, 34),
                     "Uniformes",
                     Accion.UNIFORME,
                 ),
                 Boton(
-                    pygame.Rect(260, 448, 480, 36),
+                    pygame.Rect(260, 445, 480, 34),
                     "Personalizar escudo",
                     Accion.ESCUDO,
                 ),
                 Boton(
-                    pygame.Rect(260, 486, 480, 36),
+                    pygame.Rect(260, 482, 480, 34),
                     "Editor de jugadores",
                     Accion.EDITOR,
                 ),
                 Boton(
-                    pygame.Rect(260, 524, 480, 36),
+                    pygame.Rect(260, 519, 480, 34),
                     "Estadio",
                     Accion.ESTADIO,
                 ),
                 Boton(
-                    pygame.Rect(260, 562, 480, 36),
+                    pygame.Rect(260, 556, 480, 34),
+                    "Palmarés",
+                    Accion.PALMARES,
+                ),
+                Boton(
+                    pygame.Rect(260, 593, 480, 34),
                     "Volver",
                     Accion.VOLVER,
                 ),
             ],
             Pantalla.ESCUDO: self._botones_de_escudo(),
+            Pantalla.MODOS: self._botones_de_modos(),
             Pantalla.UNIFORME: self._botones_de_uniforme(),
             Pantalla.EDITOR: self._botones_de_editor(),
             Pantalla.TACTICA: self._botones_de_tactica(),
             Pantalla.ESTADIO: self._botones_de_estadio(),
+            # Se regenera al abrir la pantalla y tras cada cambio.
+            Pantalla.SUSTITUCIONES: [],
+            Pantalla.PALMARES: [
+                Boton(
+                    pygame.Rect(380, 545, 240, 52),
+                    "Volver",
+                    Accion.VOLVER,
+                ),
+            ],
             Pantalla.AYUDA: [
                 Boton(
                     pygame.Rect(380, 468, 240, 52),
@@ -311,6 +368,10 @@ class Menus:
         self._velo_suave = pygame.Surface((ANCHO, ALTO), pygame.SRCALPHA)
         self._velo_suave.fill((2, 8, 18, 38))
         self._pies: dict[str, pygame.Surface] = {}
+        # Último cursor aplicado: evita llamar a SDL en cada movimiento.
+        self._cursor_activo: bool | None = None
+        # Miniatura del estadio, cacheada por configuración.
+        self._mini_estadio_cache: tuple[Estadio, pygame.Surface] | None = None
 
         # Personalización del escudo del jugador.
         self.escudo_color: Color = ESCUDO_PRESETS[0][1]
@@ -366,11 +427,55 @@ class Menus:
 
         # Estadio: césped, momento, gradas y diseño de la cancha.
         self._estadio = ESTADIO_POR_DEFECTO
+        # Modo de juego elegido en la pantalla de modos.
+        self.modo_seleccionado = ModoJuego.CAMPANA
+
+        self.rect_panel_modos = pygame.Rect(150, 90, 700, 520)
+        self._panel_modos = self._crear_panel(
+            self.rect_panel_modos,
+            self.ACENTO_PANEL,
+        )
+
         self.rect_panel_estadio = pygame.Rect(150, 90, 700, 520)
         self._panel_estadio = self._crear_panel(
             self.rect_panel_estadio,
             self.ACENTO_PANEL,
         )
+
+        # Palmarés de la campaña: tabla de posiciones, historial de
+        # resultados y trofeos desbloqueados (los llena el guardado).
+        self.tabla_posiciones = TablaPosiciones()
+        self.historial: list[Resultado] = []
+        self.trofeos: set[str] = set()
+        self.rect_panel_palmares = pygame.Rect(110, 90, 780, 520)
+        self._panel_palmares = self._crear_panel(
+            self.rect_panel_palmares,
+            self.ACENTO_PANEL,
+        )
+
+        # Sustituciones: banquillo del equipo humano, pareja elegida
+        # (hueco que sale, índice de banquillo que entra) y cambios ya
+        # usados por equipo, con tope por partido.
+        self.suplentes_editables = suplentes_por_defecto_todos()
+        self.cambios_usados: dict[Equipo, int] = dict.fromkeys(
+            Equipo,
+            0,
+        )
+        self._cambio_sale: int | None = None
+        self._cambio_entra: int | None = None
+        self._sustitucion_pendiente: (
+            tuple[Equipo, int, int, JugadorPlantilla] | None
+        ) = None
+        # Cambios confirmados en este partido (equipo, hueco y ficha que
+        # salió): se deshacen al empezar el siguiente para que el partido
+        # arranque siempre con los once titulares del editor.
+        self._sustituciones_partido: list[tuple[Equipo, int, JugadorPlantilla]] = []
+        self.rect_panel_sustituciones = pygame.Rect(150, 70, 700, 540)
+        self._panel_sustituciones = self._crear_panel(
+            self.rect_panel_sustituciones,
+            self.ACENTO_PANEL,
+        )
+        self._regenerar_sustituciones()
 
     # --------------------------------------------------
     # Construcción
@@ -498,8 +603,38 @@ class Menus:
         ]
 
     @staticmethod
+    def _botones_de_modos() -> list[Boton]:
+        """Botones del selector de modos: uno por modo y volver."""
+        modos = (
+            ModoJuego.CAMPANA,
+            ModoJuego.LIGA,
+            ModoJuego.COPA,
+            ModoJuego.CAMPEONES,
+            ModoJuego.SUPERVIVENCIA,
+            ModoJuego.ENTRENAMIENTO,
+            ModoJuego.DOS_JUGADORES,
+        )
+        botones = [
+            Boton(
+                pygame.Rect(260, 218 + indice * 46, 480, 40),
+                _ETIQUETAS_MODO[modo],
+                _ACCION_DE_MODO[modo],
+            )
+            for indice, modo in enumerate(modos)
+        ]
+        botones.append(
+            Boton(
+                pygame.Rect(260, 554, 480, 42),
+                "Volver",
+                Accion.VOLVER,
+            )
+        )
+
+        return botones
+
+    @staticmethod
     def _botones_de_estadio() -> list[Boton]:
-        """Botones del estadio: césped, momento, diseño, gradas y volver."""
+        """Botones del estadio: césped, momento, clima, diseño, gradas."""
         return [
             Boton(
                 pygame.Rect(190, 220, 370, 44),
@@ -513,11 +648,16 @@ class Menus:
             ),
             Boton(
                 pygame.Rect(190, 324, 370, 44),
+                "Clima: DESPEJADO",
+                Accion.CLIMA,
+            ),
+            Boton(
+                pygame.Rect(190, 376, 370, 44),
                 "Diseño: CLÁSICO",
                 Accion.DISENO,
             ),
             Boton(
-                pygame.Rect(190, 376, 370, 44),
+                pygame.Rect(190, 428, 370, 44),
                 "Gradas: CON AFICIONADOS",
                 Accion.GRADAS,
             ),
@@ -585,10 +725,13 @@ class Menus:
     def plantillas_seleccionadas(
         self,
     ) -> dict[Equipo, tuple[JugadorPlantilla, ...]]:
-        """Fichas editadas, listas para aplicarse al partido."""
+        """Fichas editadas, saneadas y listas para el partido."""
         return {
-            equipo: tuple(fichas)
-            for equipo, fichas in self.plantillas_editables.items()
+            equipo: normalizar_plantilla(
+                self.plantillas_editables.get(equipo),
+                equipo,
+            )
+            for equipo in Equipo
         }
 
     @property
@@ -713,6 +856,7 @@ class Menus:
             Accion.CICLAR_JUGADOR,
             Accion.CICLAR_ROL,
             Accion.CICLAR_VELOCIDAD,
+            Accion.CLIMA,
             Accion.DISENO,
             Accion.MOMENTO,
             Accion.PRENDA,
@@ -756,7 +900,10 @@ class Menus:
             Pantalla.UNIFORME,
             Pantalla.EDITOR,
             Pantalla.TACTICA,
+            Pantalla.MODOS,
             Pantalla.ESTADIO,
+            Pantalla.PALMARES,
+            Pantalla.SUSTITUCIONES,
         ):
             self._retroceder()
 
@@ -800,14 +947,42 @@ class Menus:
             return
 
         if (
+            accion is Accion.ELEGIR_SALE
+            and boton is not None
+            and isinstance(boton.valor, int)
+        ):
+            # Segundo toque sobre el mismo jugador: se desmarca.
+            self._cambio_sale = (
+                None if self._cambio_sale == boton.valor else boton.valor
+            )
+            return
+
+        if (
+            accion is Accion.ELEGIR_ENTRA
+            and boton is not None
+            and isinstance(boton.valor, int)
+        ):
+            self._cambio_entra = (
+                None if self._cambio_entra == boton.valor else boton.valor
+            )
+            return
+
+        if accion is Accion.HACER_CAMBIO:
+            self._confirmar_sustitucion()
+            return
+
+        if (
             accion is Accion.PRENDA
             and boton is not None
             and isinstance(boton.valor, str)
         ):
-            self._ciclar_color_prenda(boton.valor)
+            self._ciclar_color_prenda(boton.valor, paso)
             return
 
         if accion is Accion.JUGAR:
+            self._navegar(Pantalla.MODOS)
+        elif accion in _ACCION_DE_MODO.values():
+            self.modo_seleccionado = ModoJuego(accion.value)
             self._cambiar_pantalla(Pantalla.PARTIDO)
             self._accion_pendiente = Accion.JUGAR
         elif accion is Accion.CONTINUAR:
@@ -822,6 +997,8 @@ class Menus:
         elif accion is Accion.AYUDA:
             self._navegar(Pantalla.AYUDA)
         elif accion is Accion.MENU_PRINCIPAL:
+            # La pantalla ya cambió; la acción queda pendiente por si
+            # quien consuma las acciones quiere reaccionar (p. ej. tests).
             self._cambiar_pantalla(Pantalla.PRINCIPAL)
             self._accion_pendiente = Accion.MENU_PRINCIPAL
         elif accion is Accion.SONIDO:
@@ -839,17 +1016,19 @@ class Menus:
             self._navegar(Pantalla.EDITOR)
         elif accion is Accion.TACTICA:
             self._navegar(Pantalla.TACTICA)
+        elif accion is Accion.SUSTITUCIONES:
+            self.abrir_sustituciones()
         elif accion is Accion.ESTADIO:
             self._navegar(Pantalla.ESTADIO)
+        elif accion is Accion.PALMARES:
+            self._navegar(Pantalla.PALMARES)
         elif accion is Accion.EQUIPO_EDITOR:
             self._equipo_editor = equipo_rival(self._equipo_editor)
-            self._jugador_editor %= len(
-                self.plantillas_editables[self._equipo_editor]
-            )
+            self._jugador_editor %= len(self._plantilla_editor())
         elif accion is Accion.CICLAR_JUGADOR:
             self._jugador_editor = (
                 self._jugador_editor + paso
-            ) % len(self.plantillas_editables[self._equipo_editor])
+            ) % len(self._plantilla_editor())
         elif accion is Accion.EDITOR_NOMBRE:
             self._editando_nombre = not self._editando_nombre
 
@@ -893,15 +1072,35 @@ class Menus:
 
         elif accion is Accion.CESPED:
             self._estadio = self._estadio._replace(
-                cesped=siguiente_opcion(CESPEDES, self._estadio.cesped)
+                cesped=siguiente_opcion(
+                    CESPEDES,
+                    self._estadio.cesped,
+                    paso,
+                )
             )
         elif accion is Accion.MOMENTO:
             self._estadio = self._estadio._replace(
-                momento=siguiente_opcion(MOMENTOS, self._estadio.momento)
+                momento=siguiente_opcion(
+                    MOMENTOS,
+                    self._estadio.momento,
+                    paso,
+                )
+            )
+        elif accion is Accion.CLIMA:
+            self._estadio = self._estadio._replace(
+                clima=siguiente_opcion(
+                    CLIMAS,
+                    self._estadio.clima,
+                    paso,
+                )
             )
         elif accion is Accion.DISENO:
             self._estadio = self._estadio._replace(
-                diseno=siguiente_opcion(DISENOS, self._estadio.diseno)
+                diseno=siguiente_opcion(
+                    DISENOS,
+                    self._estadio.diseno,
+                    paso,
+                )
             )
         elif accion is Accion.GRADAS:
             self._estadio = self._estadio._replace(
@@ -939,9 +1138,17 @@ class Menus:
 
         return "Personalizado"
 
-    def _ciclar_color_prenda(self, prenda: str) -> None:
-        """Avanza al color siguiente de una prenda del equipo en pantalla."""
+    def _ciclar_color_prenda(self, prenda: str, paso: int = 1) -> None:
+        """Avanza al color siguiente de una prenda del equipo en pantalla.
+
+        ``paso`` permite recorrer la lista hacia atrás con la flecha
+        izquierda; un clic o ENTER equivalen a ``paso=1``.
+        """
         uniforme = self.uniformes_seleccionados[self._equipo_uniforme]
+
+        if not hasattr(uniforme, prenda):
+            return
+
         posicion = next(
             (
                 indice
@@ -950,8 +1157,13 @@ class Menus:
             ),
             -1,
         )
+
+        if posicion < 0:
+            # Color personalizado: se entra por el extremo adecuado.
+            posicion = -1 if paso > 0 else 0
+
         _nombre, color = UNIFORME_PRESETS[
-            (posicion + 1) % len(UNIFORME_PRESETS)
+            (posicion + paso) % len(UNIFORME_PRESETS)
         ]
         self.uniformes_seleccionados[self._equipo_uniforme] = (
             uniforme._replace(**{prenda: color})
@@ -992,31 +1204,205 @@ class Menus:
         dorsales ni atributos, y deja pendiente la acción para que la
         aplicación recree a los jugadores con la nueva disposición.
         """
+        if nombre not in NOMBRES_FORMACION:
+            nombre = NOMBRES_FORMACION[0]
+
         self.formacion_nombre = nombre
 
         for equipo in Equipo:
+            plantilla = normalizar_plantilla(
+                self.plantillas_editables.get(equipo),
+                equipo,
+            )
             self.plantillas_editables[equipo] = list(
-                aplicar_formacion(
-                    tuple(self.plantillas_editables[equipo]),
-                    nombre,
-                )
+                aplicar_formacion(plantilla, nombre)
             )
 
         self._accion_pendiente = Accion.FORMACION
 
     # --------------------------------------------------
+    # Sustituciones
+    # --------------------------------------------------
+
+    def abrir_sustituciones(self) -> None:
+        """Abre la pantalla de cambios, con las listas al día."""
+        self._regenerar_sustituciones()
+        self._navegar(Pantalla.SUSTITUCIONES)
+
+    def reiniciar_sustituciones(self) -> None:
+        """Devuelve el banquillo y el contador a su estado inicial.
+
+        Se llama al empezar o reiniciar una partida: cada partido parte
+        con los once titulares del editor y su cupo de cambios intacto.
+        También deshace los cambios confirmados en el partido anterior
+        (devolviendo a los titulares que salieron) y descarta cualquier
+        sustitución pendiente sin aplicar.
+        """
+        for equipo, hueco, saliente in reversed(self._sustituciones_partido):
+            plantilla = list(self._plantilla_visible(equipo))
+
+            if 0 <= hueco < len(plantilla):
+                plantilla[hueco] = saliente
+                self.plantillas_editables[equipo] = plantilla
+
+        self._sustituciones_partido.clear()
+        self.suplentes_editables = suplentes_por_defecto_todos()
+        self.cambios_usados = dict.fromkeys(Equipo, 0)
+        self._cambio_sale = None
+        self._cambio_entra = None
+        self._sustitucion_pendiente = None
+        self._regenerar_sustituciones()
+
+    def consumir_sustitucion(self) -> tuple[Equipo, int, int, JugadorPlantilla] | None:
+        """Devuelve y borra el cambio confirmado, listo para aplicarse."""
+        sustitucion = self._sustitucion_pendiente
+        self._sustitucion_pendiente = None
+        return sustitucion
+
+    def _cambios_restantes(self, equipo: Equipo) -> int:
+        """Cambios que le quedan a un equipo en este partido."""
+        return max(0, SUSTITUCIONES_MAXIMAS - self.cambios_usados[equipo])
+
+    def _regenerar_sustituciones(self) -> None:
+        """Reconstruye los botones de la pantalla con las fichas vivas.
+
+        Los titulares en campo y el banquillo se leen de los datos: los
+        jugadores que ya entraron desaparecen del banquillo solos.
+        """
+        equipo = Equipo.LOCAL
+        en_campo = self._plantilla_visible(equipo)[:TITULARES_POR_EQUIPO]
+        banquillo = self.suplentes_editables.get(equipo, ())
+        restantes = self._cambios_restantes(equipo)
+
+        filas_campo = [
+            Boton(
+                pygame.Rect(185, 200 + fila * 32, 300, 28),
+                f"{ficha.dorsal:>2} · {ficha.nombre}",
+                Accion.ELEGIR_SALE,
+                valor=fila,
+            )
+            for fila, ficha in enumerate(en_campo)
+        ]
+        filas_banquillo = [
+            Boton(
+                pygame.Rect(520, 200 + fila * 32, 300, 28),
+                f"{ficha.dorsal:>2} · {ficha.nombre}",
+                Accion.ELEGIR_ENTRA,
+                valor=fila,
+            )
+            for fila, ficha in enumerate(banquillo)
+        ]
+
+        self.botones[Pantalla.SUSTITUCIONES] = (
+            filas_campo
+            + filas_banquillo
+            + [
+                Boton(
+                    pygame.Rect(185, 566, 300, 36),
+                    f"Confirmar ({restantes} restantes)"
+                    if restantes
+                    else "Sin cambios restantes",
+                    Accion.HACER_CAMBIO,
+                ),
+                Boton(
+                    pygame.Rect(520, 566, 300, 36),
+                    "Volver",
+                    Accion.VOLVER,
+                ),
+            ]
+        )
+        # La lista se reconstruye: el índice activo se deja dentro
+        # del rango aunque el banquillo encoja.
+        botones = self.botones[Pantalla.SUSTITUCIONES]
+        self.indice = min(max(self.indice, 0), max(0, len(botones) - 1))
+
+    def _confirmar_sustitucion(self) -> None:
+        """Intercambia al titular elegido con el suplente elegido.
+
+        El que entra hereda el hueco táctico del que sale (rol y
+        posición) conservando nombre, dorsal y atributos; el que sale
+        pasa al banquillo. Deja la sustitución pendiente para que la
+        aplicación recree al jugador en el campo.
+        """
+        equipo = Equipo.LOCAL
+
+        if (
+            self._cambio_sale is None
+            or self._cambio_entra is None
+            or self._cambios_restantes(equipo) == 0
+        ):
+            return
+
+        hueco = self._cambio_sale
+        indice_banquillo = self._cambio_entra
+        plantilla = list(self._plantilla_visible(equipo))
+        banquillo = list(self.suplentes_editables.get(equipo, ()))
+
+        if hueco >= len(plantilla) or indice_banquillo >= len(banquillo):
+            return
+
+        saliente = plantilla[hueco]
+        entrante = banquillo[indice_banquillo]._replace(
+            rol=saliente.rol,
+            x=saliente.x,
+            y=saliente.y,
+        )
+        banquillo[indice_banquillo] = saliente
+        plantilla[hueco] = entrante
+
+        self.suplentes_editables[equipo] = tuple(banquillo)
+        self.plantillas_editables[equipo] = plantilla
+        self.cambios_usados[equipo] += 1
+        self._sustituciones_partido.append((equipo, hueco, saliente))
+        self._cambio_sale = None
+        self._cambio_entra = None
+        self._sustitucion_pendiente = (
+            equipo,
+            hueco,
+            saliente.dorsal,
+            entrante,
+        )
+        self._regenerar_sustituciones()
+
+    # --------------------------------------------------
     # Editor de jugadores
     # --------------------------------------------------
 
+    def _plantilla_visible(
+        self,
+        equipo: Equipo,
+    ) -> Sequence[JugadorPlantilla]:
+        """Fichas dibujables de un equipo, con la base si faltan."""
+        plantilla = self.plantillas_editables.get(equipo)
+
+        if not isinstance(plantilla, (list, tuple)) or not plantilla:
+            return plantilla_por_defecto(equipo)
+
+        return plantilla
+
+    def _plantilla_editor(self) -> list[JugadorPlantilla]:
+        """Plantilla editable del equipo en pantalla, siempre con 11 fichas."""
+        plantilla = self.plantillas_editables.get(self._equipo_editor)
+        total = len(plantilla_por_defecto(self._equipo_editor))
+
+        if not isinstance(plantilla, list) or len(plantilla) != total:
+            plantilla = list(
+                normalizar_plantilla(plantilla, self._equipo_editor)
+            )
+            self.plantillas_editables[self._equipo_editor] = plantilla
+
+        return plantilla
+
     def _ficha_editor(self) -> JugadorPlantilla:
         """Ficha del jugador que se está editando."""
-        return self.plantillas_editables[self._equipo_editor][
-            self._jugador_editor
-        ]
+        plantilla = self._plantilla_editor()
+        self._jugador_editor %= len(plantilla)
+        return plantilla[self._jugador_editor]
 
     def _guardar_ficha(self, ficha: JugadorPlantilla) -> None:
         """Reemplaza la ficha editada del jugador en pantalla."""
-        plantilla = self.plantillas_editables[self._equipo_editor]
+        plantilla = self._plantilla_editor()
+        self._jugador_editor %= len(plantilla)
         plantilla[self._jugador_editor] = ficha
 
     def _salir_de_modos_editor(self) -> None:
@@ -1046,8 +1432,10 @@ class Menus:
 
         if tecla in (pygame.K_RETURN, pygame.K_KP_ENTER):
             self._editando_nombre = False
+            limpio = nombre.strip()
+            # Un nombre vacío conserva el actual en vez de vaciar la ficha.
             self._guardar_ficha(
-                ficha._replace(nombre=nombre.strip().capitalize())
+                ficha._replace(nombre=limpio.capitalize() if limpio else ficha.nombre)
             )
         elif tecla == pygame.K_ESCAPE:
             # Cancela la edición sin tocar el nombre.
@@ -1065,12 +1453,15 @@ class Menus:
 
     @staticmethod
     def _caracter_de_tecla(tecla: int) -> str:
-        """Letra o dígito que representa una tecla, si aplica."""
+        """Letra, dígito o espacio que representa una tecla, si aplica."""
         if pygame.K_a <= tecla <= pygame.K_z:
             return chr(ord("a") + tecla - pygame.K_a)
 
         if pygame.K_0 <= tecla <= pygame.K_9:
             return chr(ord("0") + tecla - pygame.K_0)
+
+        if tecla == pygame.K_SPACE:
+            return " "
 
         return ""
 
@@ -1132,8 +1523,7 @@ class Menus:
     def _actualizar_etiquetas_editor(self) -> None:
         """Refresca las etiquetas de la pantalla del editor."""
         equipo = self._equipo_editor
-        plantilla = self.plantillas_editables[equipo]
-        ficha = plantilla[self._jugador_editor % len(plantilla)]
+        ficha = self._ficha_editor()
 
         for boton in self.botones[Pantalla.EDITOR]:
             if boton.accion is Accion.EQUIPO_EDITOR:
@@ -1173,6 +1563,8 @@ class Menus:
                 boton.etiqueta = f"Césped: {estadio.cesped.value.upper()}"
             elif boton.accion is Accion.MOMENTO:
                 boton.etiqueta = f"Momento: {NOMBRES_MOMENTO[estadio.momento]}"
+            elif boton.accion is Accion.CLIMA:
+                boton.etiqueta = f"Clima: {estadio.clima.value.upper()}"
             elif boton.accion is Accion.DISENO:
                 boton.etiqueta = f"Diseño: {NOMBRES_DISENO[estadio.diseno]}"
             elif boton.accion is Accion.GRADAS:
@@ -1184,14 +1576,21 @@ class Menus:
                 boton.etiqueta = f"Gradas: {estado}"
 
     def _cursor_mano(self, activo: bool) -> None:
+        """Cambia el cursor solo cuando su estado realmente cambia."""
+        if activo == self._cursor_activo:
+            return
+
         try:
             pygame.mouse.set_cursor(
                 pygame.SYSTEM_CURSOR_HAND
                 if activo
                 else pygame.SYSTEM_CURSOR_ARROW
             )
+            self._cursor_activo = activo
         except pygame.error:
-            pass
+            # Sin sistema de ventanas (SDL dummy) no hay cursores; se
+            # recuerda el estado para no reintentar en cada movimiento.
+            self._cursor_activo = activo
 
     def _cursor_normal(self) -> None:
         self._cursor_mano(False)
@@ -1251,6 +1650,14 @@ class Menus:
                 self.rect_panel_escudo.topleft,
             )
             self._dibujar_escudo(pantalla)
+        elif self.pantalla is Pantalla.MODOS:
+            self.fondo_principal.dibujar(pantalla)
+            pantalla.blit(self._velo, (0, 0))
+            pantalla.blit(
+                self._panel_modos,
+                self.rect_panel_modos.topleft,
+            )
+            self._dibujar_modos(pantalla)
         elif self.pantalla is Pantalla.UNIFORME:
             self.fondo_opciones.dibujar(pantalla)
             pantalla.blit(self._velo, (0, 0))
@@ -1283,6 +1690,22 @@ class Menus:
                 self.rect_panel_estadio.topleft,
             )
             self._dibujar_estadio(pantalla)
+        elif self.pantalla is Pantalla.PALMARES:
+            self.fondo_opciones.dibujar(pantalla)
+            pantalla.blit(self._velo, (0, 0))
+            pantalla.blit(
+                self._panel_palmares,
+                self.rect_panel_palmares.topleft,
+            )
+            self._dibujar_palmares(pantalla)
+        elif self.pantalla is Pantalla.SUSTITUCIONES:
+            self.fondo_opciones.dibujar(pantalla)
+            pantalla.blit(self._velo, (0, 0))
+            pantalla.blit(
+                self._panel_sustituciones,
+                self.rect_panel_sustituciones.topleft,
+            )
+            self._dibujar_sustituciones(pantalla)
 
     def _dibujar_botones_imagen(
         self,
@@ -1383,13 +1806,6 @@ class Menus:
         )
         self._centrar(
             pantalla,
-            "El cambio de sonido se aplica al instante.",
-            610,
-            self.fuente_pequena,
-            self.TEXTO_SUAVE,
-        )
-        self._centrar(
-            pantalla,
             "Flechas: elegir | ENTER: aceptar | ESC: volver",
             630,
             self.fuente_pequena,
@@ -1459,6 +1875,41 @@ class Menus:
         pantalla.blit(
             vista,
             vista.get_rect(center=(700, 528)),
+        )
+
+    def _dibujar_modos(self, pantalla: pygame.Surface) -> None:
+        """Dibuja el selector de modos de juego."""
+        self._centrar(
+            pantalla,
+            "MODOS DE JUEGO",
+            150,
+            self.fuente_titulo,
+            BLANCO,
+        )
+        self._centrar(
+            pantalla,
+            "Elige cómo quieres jugar",
+            192,
+            self.fuente_texto,
+            self.TEXTO_SUAVE,
+        )
+        self._dibujar_botones_panel(
+            pantalla,
+            Pantalla.MODOS,
+            self.ACENTO_PANEL,
+        )
+        boton = self.boton_actual
+        descripcion = "Flechas: elegir | ENTER: aceptar | ESC: volver"
+
+        if boton is not None and boton.accion in _ACCION_DE_MODO.values():
+            descripcion = DESCRIPCIONES[ModoJuego(boton.accion.value)]
+
+        self._centrar(
+            pantalla,
+            descripcion,
+            606,
+            self.fuente_pequena,
+            (150, 170, 190),
         )
 
     def _dibujar_uniformes(self, pantalla: pygame.Surface) -> None:
@@ -1578,7 +2029,7 @@ class Menus:
             )
 
             for indice, ficha in enumerate(
-                self.plantillas_editables[equipo]
+                self._plantilla_visible(equipo)
             ):
                 x, y = self._punto_en_campo(equipo, ficha, campo)
                 radio = 7 if activo else 4
@@ -1678,11 +2129,55 @@ class Menus:
 
         camiseta = self.uniformes_seleccionados[Equipo.LOCAL].camiseta
 
-        for ficha in self.plantillas_editables[Equipo.LOCAL]:
+        for ficha in self._plantilla_visible(Equipo.LOCAL):
             x, y = self._punto_en_campo(Equipo.LOCAL, ficha, campo)
             color = (230, 230, 230) if ficha.rol is Rol.PORTERO else camiseta
             pygame.draw.circle(pantalla, color, (x, y), 7)
             pygame.draw.circle(pantalla, BLANCO, (x, y), 7, 1)
+
+    def _dibujar_sustituciones(self, pantalla: pygame.Surface) -> None:
+        """Panel de cambios: en campo a la izquierda, banquillo a la derecha."""
+        self._centrar(
+            pantalla,
+            "CAMBIOS",
+            110,
+            self.fuente_titulo,
+            BLANCO,
+        )
+        restantes = self._cambios_restantes(Equipo.LOCAL)
+        subtitulo = (
+            f"Elige al que sale y al que entra · {restantes} cambio(s) restante(s)"
+            if restantes
+            else "No quedan cambios disponibles en este partido"
+        )
+        self._centrar(
+            pantalla,
+            subtitulo,
+            148,
+            self.fuente_texto,
+            self.TEXTO_SUAVE,
+        )
+        self._centrar_en(
+            pantalla,
+            "En campo",
+            335,
+            180,
+            self.fuente_boton,
+            self.ACENTO_PANEL,
+        )
+        self._centrar_en(
+            pantalla,
+            "Banquillo",
+            670,
+            180,
+            self.fuente_boton,
+            self.ACENTO_PANEL,
+        )
+        self._dibujar_botones_panel(
+            pantalla,
+            Pantalla.SUSTITUCIONES,
+            self.ACENTO_PANEL,
+        )
 
     def _marcar_seleccion_tactica(
         self,
@@ -1695,7 +2190,9 @@ class Menus:
         ):
             return
 
-        if NOMBRES_FORMACION[boton.valor] == self.formacion_nombre:
+        if NOMBRES_FORMACION[
+            boton.valor % len(NOMBRES_FORMACION)
+        ] == self.formacion_nombre:
             pygame.draw.rect(
                 pantalla,
                 BLANCO,
@@ -1739,8 +2236,7 @@ class Menus:
         pantalla: pygame.Surface,
     ) -> None:
         """Miniatura del estadio con la personalización en vivo."""
-        mini = pygame.Surface((280, 200))
-        self._dibujar_estadio_mini(mini)
+        mini = self._mini_estadio()
         pantalla.blit(mini, mini.get_rect(center=(700, 330)))
         self._centrar_en(
             pantalla,
@@ -1750,6 +2246,19 @@ class Menus:
             self.fuente_pequena,
             self.TEXTO_SUAVE,
         )
+
+    def _mini_estadio(self) -> pygame.Surface:
+        """Miniatura cacheada: solo se repinta al cambiar el estadio."""
+        if (
+            self._mini_estadio_cache is not None
+            and self._mini_estadio_cache[0] == self._estadio
+        ):
+            return self._mini_estadio_cache[1]
+
+        mini = pygame.Surface((280, 200))
+        self._dibujar_estadio_mini(mini)
+        self._mini_estadio_cache = (self._estadio, mini)
+        return mini
 
     def _dibujar_estadio_mini(self, mini: pygame.Surface) -> None:
         """Estadio en miniatura: entorno, aficionados y cancha."""
@@ -1772,6 +2281,107 @@ class Menus:
         pygame.draw.rect(mini, BLANCO, campo, 1)
         pygame.draw.line(mini, BLANCO, campo.midleft, campo.midright, 1)
         pygame.draw.circle(mini, BLANCO, campo.center, 22, 1)
+
+    def _dibujar_palmares(self, pantalla: pygame.Surface) -> None:
+        """Panel de la campaña: posiciones, resultados y trofeos."""
+        self._centrar(
+            pantalla,
+            "PALMARÉS",
+            150,
+            self.fuente_titulo,
+            BLANCO,
+        )
+        self._centrar(
+            pantalla,
+            "La campaña del club: puntos, resultados y trofeos",
+            192,
+            self.fuente_texto,
+            self.TEXTO_SUAVE,
+        )
+        self._dibujar_botones_panel(
+            pantalla,
+            Pantalla.PALMARES,
+            self.ACENTO_PANEL,
+        )
+        self._centrar_en(
+            pantalla, "POSICIONES", 300, 228, self.fuente_texto, self.TEXTO_SUAVE
+        )
+        self._centrar_en(
+            pantalla, "RESULTADOS", 575, 228, self.fuente_texto, self.TEXTO_SUAVE
+        )
+        self._centrar_en(
+            pantalla, "TROFEOS", 790, 228, self.fuente_texto, self.TEXTO_SUAVE
+        )
+        self._dibujar_tabla_posiciones(pantalla)
+        self._dibujar_historial(pantalla)
+        self._dibujar_trofeos(pantalla)
+
+    def _dibujar_tabla_posiciones(self, pantalla: pygame.Surface) -> None:
+        """La tabla de la campaña: TU CLUB contra los 11 rivales."""
+        y = 260
+
+        for posicion, (clave, fila) in enumerate(
+            self.tabla_posiciones.filas_de_campana(),
+            start=1,
+        ):
+            if clave == CLAVE_LOCAL:
+                nombre = "TU CLUB"
+                color = BLANCO
+            else:
+                nombre = nivel_por_numero(int(clave)).rival
+                color = self.TEXTO_SUAVE
+
+            etiqueta = self._texto(
+                f"{posicion}. {nombre}",
+                self.fuente_pequena,
+                color,
+            )
+            pantalla.blit(etiqueta, (140, y))
+            cifras = self._texto(
+                f"{fila.puntos} pts  {fila.g}-{fila.e}-{fila.p}"
+                f"  {fila.gf}:{fila.gc}",
+                self.fuente_pequena,
+                color,
+            )
+            pantalla.blit(cifras, cifras.get_rect(midright=(465, y + 9)))
+            y += 19
+
+    def _dibujar_historial(self, pantalla: pygame.Surface) -> None:
+        """Los últimos resultados de la campaña."""
+        if not self.historial:
+            vacio = self._texto(
+                "Aún no hay partidos",
+                self.fuente_pequena,
+                self.TEXTO_SUAVE,
+            )
+            pantalla.blit(vacio, vacio.get_rect(center=(575, 262)))
+            return
+
+        y = 260
+
+        for resultado in self.historial[:8]:
+            linea = self._texto(
+                f"N{resultado.nivel}  {resultado.goles_local}"
+                f" - {resultado.goles_visitante}",
+                self.fuente_pequena,
+                self.TEXTO_SUAVE,
+            )
+            pantalla.blit(linea, linea.get_rect(center=(575, y + 9)))
+            y += 22
+
+    def _dibujar_trofeos(self, pantalla: pygame.Surface) -> None:
+        """Los trofeos de la campaña: ganados en oro, el resto apagado."""
+        y = 260
+
+        for trofeo in TROFEOS:
+            logrado = trofeo.id in self.trofeos
+            nombre = self._texto(
+                ("★ " if logrado else "☆ ") + trofeo.nombre,
+                self.fuente_pequena,
+                AMARILLO if logrado else (95, 105, 120),
+            )
+            pantalla.blit(nombre, nombre.get_rect(midleft=(715, y + 9)))
+            y += 24
 
     def _dibujar_ayuda(self, pantalla: pygame.Surface) -> None:
         self._centrar(
@@ -1908,8 +2518,41 @@ class Menus:
             if pantalla_menu is Pantalla.TACTICA:
                 self._marcar_seleccion_tactica(pantalla, boton)
 
+            if pantalla_menu is Pantalla.SUSTITUCIONES:
+                self._marcar_seleccion_sustitucion(pantalla, boton)
+
             if boton.accion is Accion.SONIDO:
                 self._dibujar_interruptor(pantalla, boton.rect)
+
+    def _marcar_seleccion_sustitucion(
+        self,
+        pantalla: pygame.Surface,
+        boton: Boton,
+    ) -> None:
+        """Resalta el que sale, el que entra y el botón listo para confirmar."""
+        pareja_completa = (
+            self._cambio_sale is not None and self._cambio_entra is not None
+        )
+        puede_confirmar = (
+            pareja_completa and self._cambios_restantes(Equipo.LOCAL) > 0
+        )
+        marcado = (
+            (boton.accion is Accion.ELEGIR_SALE and boton.valor == self._cambio_sale)
+            or (
+                boton.accion is Accion.ELEGIR_ENTRA
+                and boton.valor == self._cambio_entra
+            )
+            or (boton.accion is Accion.HACER_CAMBIO and puede_confirmar)
+        )
+
+        if marcado:
+            pygame.draw.rect(
+                pantalla,
+                BLANCO,
+                boton.rect.inflate(8, 8),
+                1,
+                border_radius=12,
+            )
 
     def _marcar_seleccion_escudo(
         self,
@@ -1918,12 +2561,21 @@ class Menus:
     ) -> None:
         """Muestra la muestra de color y señala la opción elegida."""
         if boton.accion is Accion.ESCUDO and isinstance(boton.valor, int):
-            _etiqueta, color, borde = ESCUDO_PRESETS[boton.valor]
+            indice = boton.valor % len(ESCUDO_PRESETS)
+            _etiqueta, color, borde = ESCUDO_PRESETS[indice]
             centro = (boton.rect.left + 24, boton.rect.centery)
             pygame.draw.circle(pantalla, color, centro, 9)
             pygame.draw.circle(pantalla, borde, centro, 9, 2)
+            elegido = next(
+                (
+                    posicion
+                    for posicion, (_n, c, b) in enumerate(ESCUDO_PRESETS)
+                    if c == self.escudo_color and b == self.escudo_color_borde
+                ),
+                None,
+            )
 
-            if color == self.escudo_color:
+            if indice == elegido:
                 pygame.draw.rect(
                     pantalla,
                     BLANCO,
@@ -1934,7 +2586,8 @@ class Menus:
         elif (
             boton.accion is Accion.FORMA_ESCUDO
             and isinstance(boton.valor, int)
-            and FORMAS_ESCUDO[boton.valor] is self.escudo_forma
+            and FORMAS_ESCUDO[boton.valor % len(FORMAS_ESCUDO)]
+            is self.escudo_forma
         ):
             pygame.draw.rect(
                 pantalla,

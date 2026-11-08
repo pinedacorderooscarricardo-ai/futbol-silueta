@@ -21,7 +21,11 @@ from futbol_silueta.configuracion import (
     ALTO,
     ANCHO,
     CAMPO_RECT,
+    DURACION_CORNER,
     DURACION_GOL,
+    FORMACION_REMONTADA,
+    INTERVALO_VIENTO,
+    LATERAL_APOYO,
     PORTERIA_CENTRO,
     PRESORES_POR_EQUIPO,
     RADIO_BALON,
@@ -31,9 +35,22 @@ from futbol_silueta.configuracion import (
     Rol,
 )
 from futbol_silueta.juego import Juego
-from futbol_silueta.estadios import Cesped, Diseno, Estadio, Momento
+from futbol_silueta.entidades import Balon
+from futbol_silueta.estadios import (
+    FRICCION_CLIMA,
+    Cesped,
+    Clima,
+    Diseno,
+    Estadio,
+    Momento,
+)
+from futbol_silueta.estadisticas import registrar_resultado
+from futbol_silueta.menus import Menus
 from futbol_silueta.niveles import parametros_de_nivel
-from futbol_silueta.plantilla import aplicar_formacion
+from futbol_silueta.plantilla import (
+    aplicar_formacion,
+    suplentes_por_defecto,
+)
 from futbol_silueta.repeticion import aplicar_instante, capturar_instante
 from futbol_silueta.vista import Vista
 
@@ -321,6 +338,7 @@ class JuegoTests(unittest.TestCase):
             Momento.NOCHE,
             Diseno.RAYAS,
             False,
+            Clima.LLUVIA,
         )
         self.juego.personalizar_estadio(estadio)
 
@@ -421,6 +439,524 @@ class JuegoTests(unittest.TestCase):
         self.assertIsNot(juego.jugador_controlado, portero)
         self.assertIsNot(juego.jugador_controlado.rol, Rol.PORTERO)
 
+    def test_las_estadisticas_cuentan_el_partido(self) -> None:
+        juego = self.juego
+        control = juego.jugador_controlado
+        assert control is not None
+
+        juego.dar_posesion(control)
+        juego.actualizar(1.0 / 60.0)  # acumula posesión local
+        juego._chutar(pygame.Vector2(1, 0), control)
+        juego.dar_posesion(control)
+        juego.pasar_al_companero_mas_cercano()
+        juego.estadisticas.contar_atajada(Equipo.VISITANTE)
+
+        estadisticas = juego.estadisticas
+        self.assertGreater(estadisticas.posesion[Equipo.LOCAL], 0.0)
+        self.assertEqual(estadisticas.disparos[Equipo.LOCAL], 1)
+        self.assertEqual(estadisticas.pases[Equipo.LOCAL], 1)
+        self.assertEqual(estadisticas.atajadas[Equipo.VISITANTE], 1)
+        self.assertEqual(estadisticas.lineas()[1], "Disparos 1 - 0")
+
+    def test_el_narrador_comenta_el_gol(self) -> None:
+        self._gol_con_jugada_previa()
+
+        comentario = self.juego.comentario_gol
+        self.assertTrue(comentario)
+        self.assertIn(self.juego.jugador_controlado.nombre, comentario)
+
+    def test_r_repite_la_ultima_jugada_y_reanuda(self) -> None:
+        juego = self.juego
+
+        # Un gol deja su jugada entre las mejores guardadas.
+        self._gol_con_jugada_previa()
+        juego.tiempo_gol -= DURACION_GOL
+        juego.actualizar(1.0 / 60.0)
+        juego.procesar_tecla(pygame.K_SPACE)
+        self.assertIs(juego.estado, Estado.JUGANDO)
+
+        # R congela el estado actual, repite y lo restaura al acabar.
+        juego.balon.pos.update(CAMPO_RECT.centerx + 80, CAMPO_RECT.centery)
+        antes = capturar_instante(juego)
+
+        juego.procesar_tecla(pygame.K_r)
+        self.assertIs(juego.estado, Estado.REPETICION)
+
+        for _ in range(400):
+            juego.actualizar(1.0 / 60.0)
+
+            if juego.estado is Estado.JUGANDO:
+                break
+
+        self.assertIs(juego.estado, Estado.JUGANDO)
+        self.assertEqual(antes, capturar_instante(juego))
+
+    def test_registrar_resultado_actualiza_tabla_y_trofeos(self) -> None:
+        juego = self.juego
+        juego.nivel = 3
+        juego.goles_local = 3
+        juego.goles_visitante = 0
+
+        menus = Menus()
+        nuevos = registrar_resultado(menus, juego)
+
+        fila = menus.tabla_posiciones.fila("local")
+        self.assertEqual(fila.puntos, 3)
+        self.assertEqual(fila.g, 1)
+        self.assertEqual(menus.tabla_posiciones.fila("3").p, 1)
+        self.assertEqual(menus.historial[0].nivel, 3)
+
+        ids = {trofeo.id for trofeo in nuevos}
+        self.assertIn("primera_victoria", ids)
+        self.assertIn("goleada", ids)
+        self.assertIn("valla_invicta", ids)
+        self.assertEqual(menus.trofeos, ids)
+
+    def test_el_clima_cambia_la_friccion_del_balon(self) -> None:
+        distancia: dict[Clima, float] = {}
+
+        for clima in (Clima.LLUVIA, Clima.DESPEJADO, Clima.NIEVE):
+            balon = Balon()
+            balon.pos.update(CAMPO_RECT.center)
+            balon.vel.update(400.0, 0.0)
+
+            for _ in range(30):
+                salida = balon.actualizar_libre(
+                    1.0 / 60.0,
+                    lambda: False,
+                    FRICCION_CLIMA[clima],
+                )
+                self.assertIsNone(salida.gol)
+                self.assertIsNone(salida.esquina)
+
+            distancia[clima] = balon.pos.x - CAMPO_RECT.centerx
+
+        self.assertGreater(
+            distancia[Clima.LLUVIA],
+            distancia[Clima.DESPEJADO],
+        )
+        self.assertGreater(
+            distancia[Clima.DESPEJADO],
+            distancia[Clima.NIEVE],
+        )
+
+    def test_el_corner_se_genera_tras_tocar_el_defensor(self) -> None:
+        juego = self.juego
+        defensor = next(
+            jugador
+            for jugador in juego.jugadores
+            if jugador.equipo is Equipo.VISITANTE
+            and jugador.rol is Rol.DEFENSA
+        )
+        juego.ultimo_tocador = defensor
+        juego.balon.pos.update(CAMPO_RECT.right - 5, CAMPO_RECT.top + 40)
+        juego.balon.vel.update(500.0, 0.0)
+
+        juego.actualizar_balon(1.0 / 60.0)
+
+        self.assertIs(juego.estado, Estado.CORNER)
+        self.assertIs(juego.esquina, Equipo.LOCAL)
+
+        juego.tiempo_corner -= DURACION_CORNER
+        juego.actualizar(1.0 / 60.0)
+        self.assertIs(juego.estado, Estado.JUGANDO)
+        self.assertIsNotNone(juego.portador)
+        assert juego.portador is not None
+        self.assertIs(juego.portador.equipo, Equipo.LOCAL)
+        self.assertIs(juego.jugador_controlado, juego.portador)
+        self.assertEqual(
+            (round(juego.balon.pos.x), round(juego.balon.pos.y)),
+            (
+                CAMPO_RECT.right - RADIO_BALON,
+                CAMPO_RECT.top + RADIO_BALON,
+            ),
+        )
+
+    def test_sin_corner_si_el_ultimo_toque_fue_del_atacante(self) -> None:
+        juego = self.juego
+        atacante = next(
+            jugador
+            for jugador in juego.jugadores
+            if jugador.equipo is Equipo.LOCAL
+            and jugador.rol is Rol.DELANTERO
+        )
+        juego.ultimo_tocador = atacante
+        juego.balon.pos.update(CAMPO_RECT.right - 5, CAMPO_RECT.top + 40)
+        juego.balon.vel.update(500.0, 0.0)
+
+        juego.actualizar_balon(1.0 / 60.0)
+
+        self.assertIs(juego.estado, Estado.JUGANDO)
+        self.assertIsNone(juego.esquina)
+        self.assertLess(juego.balon.pos.x, CAMPO_RECT.right)
+
+    def test_espacio_cobra_el_corner_al_instante(self) -> None:
+        juego = self.juego
+        defensor = next(
+            jugador
+            for jugador in juego.jugadores
+            if jugador.equipo is Equipo.LOCAL
+            and jugador.rol is Rol.DEFENSA
+        )
+        juego.ultimo_tocador = defensor
+        juego.balon.pos.update(CAMPO_RECT.left + 5, CAMPO_RECT.bottom - 40)
+        juego.balon.vel.update(-500.0, 0.0)
+
+        juego.actualizar_balon(1.0 / 60.0)
+        self.assertIs(juego.estado, Estado.CORNER)
+        self.assertIs(juego.esquina, Equipo.VISITANTE)
+
+        juego.procesar_tecla(pygame.K_SPACE)
+        self.assertIs(juego.estado, Estado.JUGANDO)
+        self.assertIsNotNone(juego.portador)
+        assert juego.portador is not None
+        self.assertIs(juego.portador.equipo, Equipo.VISITANTE)
+        self.assertEqual(
+            (round(juego.balon.pos.x), round(juego.balon.pos.y)),
+            (
+                CAMPO_RECT.left + RADIO_BALON,
+                CAMPO_RECT.bottom - RADIO_BALON,
+            ),
+        )
+
+    def test_la_ia_aprende_el_lado_de_ataque(self) -> None:
+        juego = self.juego
+        control = juego.jugador_controlado
+        assert control is not None
+        juego.dar_posesion(control)
+
+        # El jugador ataca casi siempre por la mitad de abajo.
+        juego.balon.pos.update(CAMPO_RECT.centerx, CAMPO_RECT.bottom - 60)
+        # Una ventana completa de observación (5 s) más margen.
+        for _ in range(320):
+            juego._observar_estilo(1.0 / 60.0)
+
+        self.assertGreater(juego._sesgo_lateral, 0.0)
+
+        # El defensa visitante marca desplazado hacia ese lado.
+        defensa = next(
+            jugador
+            for jugador in juego.jugadores
+            if jugador.equipo is Equipo.VISITANTE
+            and jugador.rol is Rol.DEFENSA
+        )
+        objetivo = juego._objetivo_ia(
+            defensa,
+            Equipo.LOCAL,
+            False,
+            control,
+        )
+        self.assertAlmostEqual(
+            objetivo.y,
+            control.pos.y + juego._sesgo_lateral,
+            delta=1.0,
+        )
+
+    def test_la_ia_presiona_mas_si_disparas_seguido(self) -> None:
+        juego = self.juego
+        control = juego.jugador_controlado
+        assert control is not None
+        juego.dar_posesion(control)
+
+        # Dos disparos del jugador dentro de la misma ventana.
+        juego.estadisticas.contar_disparo(Equipo.LOCAL)
+        juego.estadisticas.contar_disparo(Equipo.LOCAL)
+        juego._ventana_estilo = 0.001
+        juego._observar_estilo(1.0 / 60.0)
+
+        self.assertEqual(juego._presores_extra, 1)
+
+        perseguidores = juego._elegir_perseguidores(Equipo.LOCAL)
+        self.assertEqual(len(perseguidores), PRESORES_POR_EQUIPO + 1)
+
+    def test_el_contraataque_sale_al_robar_con_espacios(self) -> None:
+        juego = self.juego
+        ladron = next(
+            jugador
+            for jugador in juego.jugadores
+            if jugador.equipo is Equipo.VISITANTE
+            and jugador.rol is Rol.MEDIO
+        )
+        control = juego.jugador_controlado
+        assert control is not None
+
+        # El robo cerca del arco local con toda la defensa lanzada.
+        juego.balon.pos.update(CAMPO_RECT.left + 60, CAMPO_RECT.centery)
+        ladron.pos.update(CAMPO_RECT.left + 90, CAMPO_RECT.centery)
+        ladron.actualizar_rect()
+
+        for jugador in juego.jugadores:
+            if (
+                jugador.equipo is Equipo.LOCAL
+                and jugador.rol is not Rol.PORTERO
+                and jugador is not control
+            ):
+                jugador.pos.update(CAMPO_RECT.right - 80, CAMPO_RECT.centery)
+                jugador.actualizar_rect()
+
+        juego.dar_posesion(control)
+        juego.dar_posesion(ladron)
+
+        self.assertTrue(juego._en_contraataque)
+
+        # Expira el tiempo (o pierde el balón) y se apaga.
+        juego._fin_contraataque = pygame.time.get_ticks() - 1
+        juego.actualizar_ia(1.0 / 60.0)
+        self.assertFalse(juego._en_contraataque)
+
+    def test_sin_contraataque_si_la_defensa_esta_detras(self) -> None:
+        juego = self.juego
+        ladron = next(
+            jugador
+            for jugador in juego.jugadores
+            if jugador.equipo is Equipo.VISITANTE
+            and jugador.rol is Rol.MEDIO
+        )
+        control = juego.jugador_controlado
+        assert control is not None
+
+        # Robo en el centro: los defensores locales siguen detrás.
+        juego.dar_posesion(control)
+        juego.dar_posesion(ladron)
+
+        self.assertFalse(juego._en_contraataque)
+
+    def test_la_ia_cambia_de_formacion_al_perder(self) -> None:
+        juego = self.juego
+        juego.mitad = 2
+        juego.goles_local = 1
+        juego.goles_visitante = 0
+
+        juego._revisar_tactica_visitante()
+
+        self.assertEqual(juego._formacion_visitante, FORMACION_REMONTADA)
+        roles = [
+            jugador.rol
+            for jugador in juego.jugadores
+            if jugador.equipo is Equipo.VISITANTE
+        ]
+        self.assertEqual(roles.count(Rol.PORTERO), 1)
+        self.assertEqual(roles.count(Rol.DEFENSA), 4)
+        self.assertEqual(roles.count(Rol.MEDIO), 3)
+        self.assertEqual(roles.count(Rol.DELANTERO), 3)
+
+        # Al reiniciar la jugada, la rival vuelve a su formación base.
+        juego.reiniciar_jugada(con_silbato=False)
+        self.assertEqual(juego._formacion_visitante, juego.formacion_nombre)
+
+    def test_el_cansancio_frena_y_rota_al_agotado(self) -> None:
+        juego = self.juego
+        agotado = next(
+            jugador
+            for jugador in juego.jugadores
+            if jugador.equipo is Equipo.VISITANTE
+            and jugador.rol is Rol.DELANTERO
+        )
+        fresco = next(
+            jugador
+            for jugador in juego.jugadores
+            if jugador.equipo is Equipo.VISITANTE
+            and jugador.rol is agotado.rol
+            and jugador is not agotado
+        )
+        agotado.cansancio = 0.95
+        base_agotado = pygame.Vector2(agotado.posicion_base)
+        base_fresco = pygame.Vector2(fresco.posicion_base)
+
+        juego._revisar_rotaciones()
+
+        # La rotación intercambia las zonas del agotado y del fresco.
+        self.assertEqual(agotado.posicion_base, base_fresco)
+        self.assertEqual(fresco.posicion_base, base_agotado)
+
+        # Y el cansancio frena: el portador agotado avanza menos.
+        def avance_con(cansancio: float) -> float:
+            juego.dar_posesion(agotado)
+            agotado.pos.update(CAMPO_RECT.centerx, CAMPO_RECT.centery)
+            agotado.cansancio = cansancio
+            x_inicial = agotado.pos.x
+
+            for _ in range(10):
+                juego.actualizar_ia(1.0 / 60.0)
+
+            return agotado.pos.x - x_inicial
+
+        # El portador avanza hacia la izquierda (avance negativo).
+        self.assertLess(abs(avance_con(0.95)), abs(avance_con(0.0)))
+
+    def test_el_marcaje_individual_es_persistente(self) -> None:
+        juego = self.juego
+        control = juego.jugador_controlado
+        assert control is not None
+
+        # El balón lejos de los defensas rivales: ninguno persigue.
+        control.pos.update(CAMPO_RECT.left + 100, CAMPO_RECT.centery)
+        control.actualizar_rect()
+        juego.dar_posesion(control)
+        juego._actualizar_decisiones()
+
+        parejas = {
+            defensa: marcado
+            for defensa, marcado in juego._marcajes_fijos.items()
+            if defensa.equipo is Equipo.VISITANTE
+        }
+        self.assertTrue(parejas)
+
+        # Mover al marcado no rompe la pareja asignada.
+        marcado = next(iter(parejas.values()))
+        marcado.pos.update(CAMPO_RECT.centerx, CAMPO_RECT.centery)
+        marcado.actualizar_rect()
+        juego._actualizar_decisiones()
+
+        self.assertEqual(juego._marcajes_fijos, parejas)
+
+    def test_los_companeros_buscan_espacios_para_recibir(self) -> None:
+        juego = self.juego
+        control = juego.jugador_controlado
+        assert control is not None
+        juego.dar_posesion(control)
+        juego.balon.pos.update(CAMPO_RECT.centerx, CAMPO_RECT.centery)
+        control.pos.update(CAMPO_RECT.centerx, CAMPO_RECT.centery)
+
+        juego._actualizar_decisiones()
+
+        self.assertEqual(len(juego._apoyos), 2)
+        self.assertNotIn(control, juego._apoyos)
+
+        apoyo = next(iter(juego._apoyos))
+        objetivo = juego._objetivo_ia(apoyo, Equipo.LOCAL, False, None)
+
+        # Desmarque adelantado hacia el arco rival y abierto a banda.
+        self.assertGreater(objetivo.x, control.pos.x)
+        self.assertAlmostEqual(
+            abs(objetivo.y - control.pos.y),
+            LATERAL_APOYO,
+            delta=1.0,
+        )
+
+    def test_el_viento_empuja_el_balon(self) -> None:
+        def avance_con(viento: pygame.Vector2) -> float:
+            balon = Balon()
+            balon.pos.update(CAMPO_RECT.center)
+            balon.vel.update(200.0, 0.0)
+
+            for _ in range(40):
+                salida = balon.actualizar_libre(
+                    1.0 / 60.0,
+                    lambda: False,
+                    viento=viento,
+                )
+                self.assertIsNone(salida.gol)
+                self.assertIsNone(salida.esquina)
+
+            return balon.pos.x - CAMPO_RECT.centerx
+
+        # Con viento a favor el balón llega más lejos.
+        self.assertGreater(
+            avance_con(pygame.Vector2(35.0, 0.0)),
+            avance_con(pygame.Vector2(0.0, 0.0)),
+        )
+
+    def test_el_viento_cambia_con_el_clima(self) -> None:
+        juego = self.juego
+        juego.estadio = Estadio(
+            Cesped.CLARO,
+            Momento.DIA,
+            Diseno.CLASICO,
+            True,
+            Clima.LLUVIA,
+        )
+        # El viento se renueva cada INTERVALO_VIENTO: se fuerza la
+        # ventana vencida para comprobar el cambio al instante.
+        juego._tiempo_viento = pygame.time.get_ticks() - INTERVALO_VIENTO
+
+        juego._actualizar_viento()
+
+        fuerza = juego.viento.length()
+        self.assertGreater(fuerza, 8.0)
+        self.assertLessEqual(fuerza, 34.0)
+
+    def test_la_camara_sigue_al_balon(self) -> None:
+        juego = self.juego
+        vista = self.vista
+
+        # Estado de cámara limpio: la vista se comparte entre pruebas.
+        vista._zoom = 1.0
+        vista._centro_camara.update(ANCHO / 2, ALTO / 2)
+
+        # Balón quieto en el centro: plano completo, sin zoom.
+        vista.dibujar(juego)
+        self.assertEqual(vista._camara_rect().width, ANCHO)
+
+        # Balón rápido junto al arco: zoom y seguimiento.
+        juego.balon.pos.update(CAMPO_RECT.right - 30, CAMPO_RECT.centery)
+        juego.balon.vel.update(600.0, 0.0)
+        vista.dibujar(juego)
+        vista.dibujar(juego)
+        camara = vista._camara_rect()
+
+        self.assertLess(camara.width, ANCHO)
+        self.assertGreater(camara.centerx, ANCHO // 2)
+
+    def test_las_animaciones_del_jugador(self) -> None:
+        juego = self.juego
+        jugador = juego.jugadores[0]
+        ladron = next(
+            j for j in juego.jugadores if j.equipo is Equipo.VISITANTE
+        )
+
+        # Correr avanza la zancada.
+        fase_inicial = jugador.fase
+        jugador.mover(10.0, 0.0)
+        self.assertGreater(jugador.fase, fase_inicial)
+
+        # El salto se agota con el tiempo.
+        jugador.saltar(0.8)
+        jugador.avanzar_animacion(0.3)
+        self.assertLess(jugador.salto_restante, 0.8)
+        self.assertGreater(jugador.salto_restante, 0.0)
+
+        # Un robo tumba al que perdía el balón.
+        juego.dar_posesion(jugador)
+        juego.dar_posesion(ladron)
+        self.assertGreater(jugador.caida_restante, 0.0)
+
+    def test_los_goles_se_celebran_y_el_portero_cae(self) -> None:
+        juego = self.juego
+        self._gol_con_jugada_previa()
+
+        self.assertEqual(juego.emocion_grada, 1.0)
+
+        goleador = juego.jugador_controlado
+        portero = next(
+            j
+            for j in juego.jugadores
+            if j.equipo is Equipo.VISITANTE and j.rol is Rol.PORTERO
+        )
+        self.assertGreater(goleador.salto_restante, 0.0)
+        self.assertGreater(portero.caida_restante, 0.0)
+
+        # La emoción de la grada se apaga poco a poco.
+        juego.avanzar_animaciones(1.0)
+        self.assertLess(juego.emocion_grada, 1.0)
+
+    def test_el_marcador_lleva_los_colores_de_los_equipos(self) -> None:
+        juego = self.juego
+        superficie = self.vista._crear_superficie_marcador(juego)
+
+        color_local = juego.uniformes[Equipo.LOCAL].camiseta
+        color_visitante = juego.uniformes[Equipo.VISITANTE].camiseta
+        self.assertEqual(
+            superficie.get_at((2, superficie.get_height() // 2))[:3],
+            color_local,
+        )
+        self.assertEqual(
+            superficie.get_at(
+                (superficie.get_width() - 3, superficie.get_height() // 2)
+            )[:3],
+            color_visitante,
+        )
+
     def test_avanza_al_siguiente_nivel_tras_el_final(self) -> None:
         self.juego.estado = Estado.FINAL
         self.juego._al_pulsar_espacio()
@@ -432,12 +968,12 @@ class JuegoTests(unittest.TestCase):
             (0, 0),
         )
 
-    def test_nueva_partida_reinicia_el_nivel(self) -> None:
+    def test_nueva_partida_conserva_el_nivel_de_la_campana(self) -> None:
         self.juego.nivel = 3
         self.juego.nueva_partida()
 
-        self.assertEqual(self.juego.nivel, 1)
-        self.assertEqual(self.juego.escudo.nivel, 1)
+        self.assertEqual(self.juego.nivel, 3)
+        self.assertEqual(self.juego.escudo.nivel, 3)
 
     def test_el_nivel_siguiente_sustituye_el_escudo_y_los_ajustes(
         self,
@@ -487,6 +1023,68 @@ class JuegoTests(unittest.TestCase):
         self.juego.cambiar_formacion("1-9-1", recolocar=False)
 
         self.assertEqual(self.juego.formacion_nombre, "4-4-2")
+
+    def test_sustituir_reemplaza_al_jugador_en_campo(self) -> None:
+        juego = self.juego
+        control = juego.jugador_controlado
+        self.assertIsNotNone(control)
+        assert control is not None
+
+        # El controlado conduce el balón: el cambio debe transferir
+        # tanto el control como el balón al que entra.
+        juego.dar_posesion(control)
+
+        hueco = 9  # Delantero local (dorsal 10) en la formación 4-4-2.
+        saliente = juego.plantillas[Equipo.LOCAL][hueco]
+        suplente = suplentes_por_defecto(Equipo.LOCAL)[0]
+        ficha_entrante = suplente._replace(
+            rol=saliente.rol,
+            x=saliente.x,
+            y=saliente.y,
+        )
+
+        aplicado = juego.sustituir(
+            Equipo.LOCAL,
+            hueco,
+            ficha_entrante,
+        )
+
+        self.assertTrue(aplicado)
+        self.assertEqual(len(juego.jugadores), 22)
+
+        entrante = next(
+            jugador
+            for jugador in juego.jugadores
+            if jugador.equipo is Equipo.LOCAL
+            and jugador.numero == suplente.dorsal
+        )
+        salidos = [
+            jugador
+            for jugador in juego.jugadores
+            if jugador.equipo is Equipo.LOCAL
+            and jugador.numero == saliente.dorsal
+        ]
+
+        self.assertEqual(entrante.nombre, suplente.nombre)
+        self.assertFalse(salidos)
+        self.assertIs(juego.jugador_controlado, entrante)
+        self.assertIs(juego.portador, entrante)
+        self.assertTrue(entrante.tiene_balon)
+        self.assertFalse(control.tiene_balon)
+
+        # El que entra ocupa el hueco del que sale (posición base).
+        campo_x = CAMPO_RECT.left + saliente.x * CAMPO_RECT.width
+        self.assertAlmostEqual(entrante.pos.x, campo_x, delta=1.0)
+
+    def test_sustituir_con_datos_invalidos_no_hace_nada(self) -> None:
+        suplente = suplentes_por_defecto(Equipo.LOCAL)[0]
+
+        self.assertFalse(
+            self.juego.sustituir(Equipo.LOCAL, 99, suplente),
+        )
+        self.assertFalse(
+            self.juego.sustituir(Equipo.LOCAL, -1, suplente),
+        )
 
 
 if __name__ == "__main__":

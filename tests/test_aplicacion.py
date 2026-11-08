@@ -21,6 +21,7 @@ from futbol_silueta.configuracion import (
     ALTO,
     ANCHO,
     DURACION_MITAD,
+    TITULARES_POR_EQUIPO,
     Equipo,
     Estado,
     Rol,
@@ -68,6 +69,11 @@ class AplicacionTests(unittest.TestCase):
 
     def test_click_en_jugar_inicia_una_partida(self) -> None:
         self._click(self.app.menus.botones[Pantalla.PRINCIPAL][0].rect)
+        self.app.procesar_eventos()
+
+        # JUGAR abre el selector de modos; la campaña es la primera.
+        self.assertIs(self.app.menus.pantalla, Pantalla.MODOS)
+        self._click(self.app.menus.botones[Pantalla.MODOS][0].rect)
         self.app.procesar_eventos()
 
         self.assertIs(self.app.menus.pantalla, Pantalla.PARTIDO)
@@ -177,6 +183,42 @@ class AplicacionTests(unittest.TestCase):
             self.assertIn(nivel, self.app.vista._escudos_rivales)
 
         self.assertEqual(len(self.app.vista._escudos_rivales), 11)
+
+    def test_el_cambio_confirmado_llega_al_partido(self) -> None:
+        menus = self.app.menus
+        menus.abrir_sustituciones()
+        self.assertIs(menus.pantalla, Pantalla.SUSTITUCIONES)
+
+        # Se marca al que sale (hueco 9), al que entra (banquillo 0) y
+        # se confirma.
+        menus._ejecutar(Accion.ELEGIR_SALE, menus.botones_actuales[9])
+        menus._ejecutar(
+            Accion.ELEGIR_ENTRA,
+            menus.botones_actuales[TITULARES_POR_EQUIPO],
+        )
+        menus._ejecutar(Accion.HACER_CAMBIO)
+
+        self.app.procesar_eventos()
+
+        entrantes = [
+            jugador
+            for jugador in self.app.juego.jugadores
+            if jugador.equipo is Equipo.LOCAL and jugador.numero == 12
+        ]
+        salidos = [
+            jugador
+            for jugador in self.app.juego.jugadores
+            if jugador.equipo is Equipo.LOCAL and jugador.numero == 10
+        ]
+
+        self.assertEqual(len(entrantes), 1)
+        self.assertFalse(salidos)
+        self.assertEqual(len(self.app.juego.jugadores), 22)
+        # La ficha del hueco también cambió en las plantillas del juego.
+        self.assertEqual(
+            self.app.juego.plantillas[Equipo.LOCAL][9].dorsal,
+            12,
+        )
 
 
 if __name__ == "__main__":

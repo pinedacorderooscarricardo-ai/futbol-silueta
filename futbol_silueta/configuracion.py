@@ -60,6 +60,7 @@ class Estado(StrEnum):
     JUGANDO = "jugando"
     GOL = "gol"
     REPETICION = "repeticion"
+    CORNER = "corner"
     ENTRETIEMPO = "entretiempo"
     FINAL = "final"
 
@@ -138,6 +139,8 @@ ENERGIA_MINIMA_SPRINT = 5.0
 COOLDOWN_ROBO = 400
 COOLDOWN_LIBERACION = 200
 DURACION_GOL = 1500
+# Pausa del saque de esquina antes de colocarlo en el vértice.
+DURACION_CORNER = 1200
 DURACION_MITAD = 3 * 60 * 1000
 
 # Repetición de goles: segundos de partido que conserva el buffer
@@ -165,6 +168,63 @@ PRESORES_POR_EQUIPO = 2
 # (persecutores y marcajes). El movimiento de cada jugador sigue
 # actualizándose en todos los fotogramas.
 INTERVALO_DECISION_IA = 100
+
+# ============================================================
+# 8b. IA adaptativa y juego colectivo
+# ============================================================
+
+# La rival muestrea el estilo del jugador en ventanas de este tamaño
+# y ajusta su bloque: dónde atacas (sesgo lateral) y cuánto disparas
+# (un perseguidor extra).
+VENTANA_ADAPTACION = 5000
+SEGUNDOS_MINIMOS_MUESTRA = 2.0
+SESGO_LATERAL_MAX = 70.0
+DISPAROS_PARA_PRESIONAR = 2
+
+# Juego colectivo: los compañeros del portador buscan espacios para
+# recibir, adelantados y abiertos por bandas.
+APOYOS_POR_EQUIPO = 2
+AVANCE_APOYO = 110.0
+LATERAL_APOYO = 90.0
+
+# ============================================================
+# 8c. Contraataques, táctica rival y sustituciones
+# ============================================================
+
+# Al robar en campo contrario y con pocos defensores por detrás, el
+# rival sale a la carrera: conduce más rápido y dispara desde más lejos.
+DURACION_CONTRAATAQUE = 3000
+PAUSA_CONTRAATAQUE = 6000
+FACTOR_CONTRAATAQUE = 1.25
+DISTANCIA_DISPARO_CONTRA = 1.4
+DEFENSAS_MINIMAS_CONTRA = 3
+
+# Perdiendo en el segundo tiempo, la rival pasa a la formación remontada.
+FORMACION_REMONTADA = "4-3-3"
+
+# Cansancio de los rivales (0-1): corren más lento a medida que se
+# agotan y la IA rota al más fresco de la misma posición.
+GASTO_CANSANCIO = 0.045
+RECUPERO_CANSANCIO = 0.02
+FACTOR_CANSANCIO = 0.3
+UMBRAL_ROTACION = 0.88
+CANSANCIO_PARA_ROTAR = 0.5
+PAUSA_ROTACION = 10000
+
+# ============================================================
+# 8d. Presentación: viento, cámara y animaciones
+# ============================================================
+
+# El viento cambia de dirección y fuerza cada tanto y empuja al balón
+# libre; su fuerza máxima depende del clima (más tormenta, más viento).
+INTERVALO_VIENTO = 8000
+
+# Cámara dinámica: zoom hacia el balón cuando corre o ronda las áreas.
+ZOOM_CAMARA = 0.9
+ZOOM_CAMARA_VELOCIDAD = 260.0
+ZOOM_CAMARA_AREA = 220.0
+SUAVIZADO_ZOOM = 0.05
+SUAVIZADO_CAMARA = 0.08
 
 # ============================================================
 # 9. Marcaje, colisiones y atajadas
@@ -222,13 +282,25 @@ VOLUMEN_DISPARO = 0.40
 # 12. Textos
 # ============================================================
 
+# La ayuda se dibuja en dos líneas para que quepa en la ventana.
 TEXTO_AYUDA = (
-    "WASD/Flechas: mover | SHIFT: sprintar | ESPACIO: chutar | "
-    "E: pasar | Q: cambiar jugador | ESC: pausa | F3: rendimiento"
+    "WASD/Flechas: mover | SHIFT: sprintar | ESPACIO: chutar",
+    "E: pasar | Q: cambiar jugador | R: repetir gol | ESC: pausa | F3: rendimiento",
 )
 TEXTO_CONTINUAR = "Pulsa ESPACIO para continuar"
 TEXTO_ENTRETIEMPO = "Pulsa ESPACIO para el segundo tiempo"
 TEXTO_FINAL = "Pulsa ESPACIO para el siguiente nivel"
+
+# Comentarios del narrador al marcar gol; ``{jugador}`` se sustituye
+# por el nombre de quien tocó el balón por última vez.
+TEXTOS_NARRADOR: tuple[str, ...] = (
+    "¡GOOOL DE {jugador}!",
+    "¡{jugador} no perdona!",
+    "¡Qué definición la de {jugador}!",
+    "¡{jugador} hace estremecer el estadio!",
+    "¡GOLAZO! {jugador} lo manda a guardar",
+    "¡{jugador} rompe la red!",
+)
 MENSAJE_GOL: dict[Equipo, str] = {
     Equipo.LOCAL: "¡GOOOL DEL LOCAL!",
     Equipo.VISITANTE: "GOL DEL VISITANTE...",
@@ -236,6 +308,7 @@ MENSAJE_GOL: dict[Equipo, str] = {
 MENSAJE_ENTRETIEMPO = "ENTRETIEMPO"
 MENSAJE_FINAL = "FINAL"
 MENSAJE_REPETICION = "REPETICIÓN"
+MENSAJE_CORNER = "CÓRNER"
 TEXTO_SALTAR_REPETICION = "Pulsa ESPACIO para saltar la repetición"
 
 # ============================================================
@@ -333,6 +406,25 @@ def formacion_por_nombre(
 ) -> tuple[PosicionFormacion, ...]:
     """Devuelve la formación pedida, con la 4-4-2 como alternativa."""
     return FORMACIONES.get(nombre, FORMACION)
+
+
+# ============================================================
+# 14. Suplentes y sustituciones
+# ============================================================
+
+# Los once primeros huecos de la plantilla son titulares (la formación).
+TITULARES_POR_EQUIPO = len(FORMACION)
+
+# Tamaño del banquillo: la plantilla completa queda en 18 futbolistas
+# (11 titulares + 7 suplentes), dentro del formato 18-23 del fútbol.
+NUMERO_SUPLENTES = 7
+
+# Máximo del formato del acta: 11 titulares + 12 suplentes. El sistema
+# admite banquillos hasta este tamaño aunque el juego arranque con 7.
+PLANTILLA_MAXIMA = TITULARES_POR_EQUIPO + 12
+
+# Cambios que puede hacer cada equipo por partido.
+SUSTITUCIONES_MAXIMAS = 5
 
 # Punto hacia el que conduce el balón la IA visitante: un poco más allá
 # de la línea de gol izquierda, a la altura del centro de la portería.

@@ -40,18 +40,28 @@ def cargar_imagen(ruta: Path) -> pygame.Surface:
 
     La reserva (un cuadro oscuro con borde rojo) mantiene el juego
     funcionando y la suite en pie aunque falte algún asset, en lugar de
-    abortar con una excepción al arrancar.
+    abortar con una excepción al arrancar. La conversión al formato de
+    pantalla es opcional: sin un modo de vídeo activo se devuelve la
+    imagen tal cual, para que herramientas y pruebas puedan cargarla.
     """
     try:
-        return pygame.image.load(ruta).convert()
-    except (pygame.error, OSError):
+        imagen = pygame.image.load(ruta)
+    except (pygame.error, OSError, TypeError):
         print(f"Aviso: no se pudo cargar {ruta}; se usa una reserva.",
               file=sys.stderr)
+        reserva = pygame.Surface((RESERVA_TAMANO, RESERVA_TAMANO))
+        reserva.fill((30, 32, 40))
+        pygame.draw.rect(reserva, (200, 60, 60), reserva.get_rect(), 6)
+        return reserva
 
-    reserva = pygame.Surface((RESERVA_TAMANO, RESERVA_TAMANO))
-    reserva.fill((30, 32, 40))
-    pygame.draw.rect(reserva, (200, 60, 60), reserva.get_rect(), 6)
-    return reserva
+    if pygame.display.get_surface() is not None:
+        try:
+            return imagen.convert()
+        except pygame.error:
+            # Sin formato de pantalla disponible se conserva la original.
+            pass
+
+    return imagen
 
 
 def acotar(valor: float, minimo: float, maximo: float) -> float:

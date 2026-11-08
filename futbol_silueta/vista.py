@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import random
 from typing import TYPE_CHECKING
 
 import pygame
@@ -22,6 +23,7 @@ from .configuracion import (
     Estado,
     MENSAJE_ENTRETIEMPO,
     MENSAJE_FINAL,
+    MENSAJE_CORNER,
     MENSAJE_GOL,
     MENSAJE_REPETICION,
     NEGRO,
@@ -29,25 +31,39 @@ from .configuracion import (
     PORTERIA_SUPERIOR,
     RADIO_CIRCULO_CENTRAL,
     ROJO_ENERGIA,
+    SUAVIZADO_CAMARA,
+    SUAVIZADO_ZOOM,
     TEXTO_AYUDA,
     TEXTO_CONTINUAR,
     TEXTO_ENTRETIEMPO,
     TEXTO_FINAL,
     TEXTO_SALTAR_REPETICION,
     VERDE_ENERGIA,
+    ZOOM_CAMARA,
+    ZOOM_CAMARA_AREA,
+    ZOOM_CAMARA_VELOCIDAD,
     Color,
+    Equipo,
 )
 
-from .escudos import Escudo, cargar_escudo
+from .entidades import Jugador
+from .escudos import (
+    Escudo,
+    cargar_escudo,
+    limpiar_cache as limpiar_cache_escudos,
+)
 from .estadios import (
     ESTADIO_POR_DEFECTO,
+    Clima,
     Estadio,
     color_entorno,
     color_tribuna,
     dibujar_aficionados,
     dibujar_cesped,
 )
+from .modos import ModoJuego
 from .niveles import nivel_por_numero
+from .utilidades import acotar
 
 if TYPE_CHECKING:
     from .juego import Juego
@@ -73,6 +89,12 @@ class Vista:
     def __init__(self, pantalla: pygame.Surface) -> None:
         self.pantalla = pantalla
 
+        # Las cachés de sprites e imágenes se convierten al formato de la
+        # pantalla; al crear una vista nueva (por ejemplo tras reiniciar
+        # pygame) hay que regenerarlas con el contexto actual.
+        Jugador.limpiar_cache()
+        limpiar_cache_escudos()
+
         self.fuente_marcador = pygame.font.SysFont("Arial", 30, bold=True)
         self.fuente_mensaje = pygame.font.SysFont("Arial", 48, bold=True)
         self.fuente_instrucciones = pygame.font.SysFont("Arial", 20)
@@ -82,7 +104,10 @@ class Vista:
         # Elementos estáticos: se crean una vez y solo se copian.
         self._estadio_fondo: Estadio = ESTADIO_POR_DEFECTO
         self.fondo = self._crear_fondo(self._estadio_fondo)
-        self.hud = self.fuente_hud.render(TEXTO_AYUDA, True, BLANCO)
+        self.hud = [
+            self.fuente_hud.render(linea, True, BLANCO)
+            for linea in TEXTO_AYUDA
+        ]
         self.mensajes_gol = {
             equipo: self.fuente_mensaje.render(texto, True, AMARILLO)
             for equipo, texto in MENSAJE_GOL.items()
@@ -137,6 +162,25 @@ class Vista:
             True,
             BLANCO,
         )
+        # Cartela del saque de esquina.
+        self.superficie_corner = self._crear_superficie_con_fondo(
+            MENSAJE_CORNER,
+            self.fuente_tiempo,
+            AMARILLO,
+            padding_x=16,
+            padding_y=8,
+            radio=8,
+        )
+        # Comentarios del narrador, cacheados por texto.
+        self._comentarios_cache: dict[str, pygame.Surface] = {}
+
+        # Cámara dinámica: el mundo se pinta en un lienzo propio para
+        # poder acercarlo y seguir al balón antes de presentarlo.
+        self._lienzo = pygame.Surface((ANCHO, ALTO)).convert()
+        self._zoom = 1.0
+        self._centro_camara = pygame.Vector2(ANCHO / 2, ALTO / 2)
+        # Confeti de la grada: puntos fijos fuera de la cancha.
+        self._confeti = self._crear_confeti()
 
         # Caché del marcador: (goles dibujados, superficie).
         self._marcador_cache: tuple[
@@ -159,19 +203,34 @@ class Vista:
             self._estadio_fondo = juego.estadio
             self.fondo = self._crear_fondo(juego.estadio)
 
-        self.pantalla.blit(self.fondo, (0, 0))
+        # El mundo (campo, jugadores, balón, clima y grada) se pinta en
+        # un lienzo propio para que la cámara pueda acercarlo; los
+        # overlays televisivos van directos sobre la pantalla. Los
+        # métodos de dibujo escriben en self.pantalla: se redirige al
+        # lienzo durante el pase de mundo y se restituye después.
+        mundo = self._lienzo
+        pantalla_real = self.pantalla
+        self.pantalla = mundo
+
+        mundo.blit(self.fondo, (0, 0))
+        self._dibujar_aficionados_reaccion(juego)
         self._dibujar_objetivo_pase(juego)
 
         for jugador in juego.jugadores:
-            jugador.dibujar(self.pantalla)
+            jugador.dibujar(mundo)
 
         self._dibujar_lances(juego)
-        juego.balon.dibujar(self.pantalla)
+        juego.balon.dibujar(mundo)
         self._dibujar_jugador_controlado(juego)
         self._dibujar_escudo(juego)
+        self._dibujar_clima(juego)
+
+        self.pantalla = pantalla_real
+        self._dibujar_con_camara(mundo, juego)
 
         self._dibujar_marcador(juego)
         self._dibujar_tiempo(juego)
+        self._dibujar_viento(juego)
         self._dibujar_energia(juego)
         self._dibujar_hud()
 
@@ -179,14 +238,214 @@ class Vista:
             self._dibujar_mensaje_gol(juego)
         elif juego.estado is Estado.REPETICION:
             self._dibujar_mensaje_repeticion()
+        elif juego.estado is Estado.CORNER:
+            self._dibujar_mensaje_corner()
         elif juego.estado in ESTADOS_ESPERA:
-            self._dibujar_mensaje_estado(juego.estado)
+            self._dibujar_mensaje_estado(juego)
+
+    def _dibujar_con_camara(self, mundo: pygame.Surface, juego: Juego) -> None:
+        """Cámara dinámica: acerca y sigue al balón.
+
+        El zoom entra cuando el balón corre o ronda las áreas y el
+        encuadre lo persigue con suavizado; en reposo vuelve al plano
+        completo, donde no hace falta reescalar nada.
+        """
+        velocidad = juego.balon.vel.length()
+        cerca_del_arco = min(
+            abs(juego.balon.pos.x - CAMPO_RECT.left),
+            abs(juego.balon.pos.x - CAMPO_RECT.right),
+        ) < ZOOM_CAMARA_AREA
+        objetivo = ZOOM_CAMARA if (velocidad > ZOOM_CAMARA_VELOCIDAD or cerca_del_arco) else 1.0
+        self._zoom += (objetivo - self._zoom) * SUAVIZADO_ZOOM
+        self._centro_camara += (juego.balon.pos - self._centro_camara) * SUAVIZADO_CAMARA
+
+        ancho = ANCHO * self._zoom
+        alto = ALTO * self._zoom
+        self._centro_camara.x = acotar(
+            self._centro_camara.x, ancho / 2, ANCHO - ancho / 2
+        )
+        self._centro_camara.y = acotar(
+            self._centro_camara.y, alto / 2, ALTO - alto / 2
+        )
+
+        if self._zoom >= 0.999:
+            self.pantalla.blit(mundo, (0, 0))
+            return
+
+        camara = pygame.Rect(0, 0, round(ancho), round(alto))
+        camara.center = (
+            round(self._centro_camara.x),
+            round(self._centro_camara.y),
+        )
+        pygame.transform.scale(
+            mundo.subsurface(camara),
+            (ANCHO, ALTO),
+            self.pantalla,
+        )
+
+    def _camara_rect(self) -> pygame.Rect:
+        """El encuadre actual de la cámara, para pruebas y ajustes."""
+        camara = pygame.Rect(
+            0,
+            0,
+            round(ANCHO * self._zoom),
+            round(ALTO * self._zoom),
+        )
+        camara.center = (
+            round(self._centro_camara.x),
+            round(self._centro_camara.y),
+        )
+        return camara
+
+    def _crear_confeti(self) -> list[tuple[int, int, float, Color]]:
+        """Puntos de confeti fijos en la grada, fuera de la cancha."""
+        aleatorio = random.Random(3)
+        puntos: list[tuple[int, int, float, Color]] = []
+        colores = (BLANCO, AMARILLO, CIAN, VERDE_ENERGIA)
+
+        while len(puntos) < 150:
+            x = aleatorio.randrange(ANCHO)
+            y = aleatorio.randrange(ALTO)
+
+            if CAMPO_RECT.inflate(14, 14).collidepoint(x, y):
+                continue
+
+            puntos.append(
+                (
+                    x,
+                    y,
+                    aleatorio.uniform(0.0, math.tau),
+                    colores[aleatorio.randrange(len(colores))],
+                )
+            )
+
+        return puntos
+
+    def _dibujar_aficionados_reaccion(self, juego: Juego) -> None:
+        """La grada celebra goles y vitorea ocasiones con confeti."""
+        emocion = juego.emocion_grada
+
+        if emocion <= 0.02:
+            return
+
+        t = pygame.time.get_ticks() * 0.006
+        visibles = int(len(self._confeti) * min(1.0, emocion))
+
+        for indice, (x, y, fase, color) in enumerate(self._confeti):
+            if indice >= visibles:
+                break
+
+            rebote = -abs(math.sin(t + fase)) * 6.0
+            self.pantalla.fill(
+                color,
+                (x, round(y + rebote), 3, 3),
+            )
+
+    def _dibujar_viento(self, juego: Juego) -> None:
+        """Chip del viento: flecha con su dirección y fuerza actual."""
+        viento = juego.viento
+        fuerza = viento.length()
+
+        if fuerza < 4.0:
+            return
+
+        chip = self._crear_superficie_con_fondo(
+            f"VIENTO {fuerza:.0f}",
+            self.fuente_hud,
+            BLANCO,
+            padding_x=14,
+            padding_y=6,
+            radio=8,
+        )
+        rect = chip.get_rect(topright=(ANCHO - 14, 12))
+        self.pantalla.blit(chip, rect)
+
+        # Flecha en la dirección del viento, junto al chip.
+        direccion = viento.normalize()
+        origen = pygame.Vector2(rect.left - 22, rect.centery)
+        punta = origen + direccion * 13.0
+        pygame.draw.line(
+            self.pantalla,
+            BLANCO,
+            origen,
+            punta,
+            2,
+        )
+        perpendicular = pygame.Vector2(-direccion.y, direccion.x) * 4.0
+        pygame.draw.polygon(
+            self.pantalla,
+            BLANCO,
+            (
+                punta + direccion * 5.0,
+                punta + perpendicular,
+                punta - perpendicular,
+            ),
+        )
 
     def _dibujar_hud(self) -> None:
-        self.pantalla.blit(
-            self.hud,
-            (12, ALTO - self.hud.get_height() - 6),
-        )
+        y = ALTO - len(self.hud) * (self.hud[0].get_height() + 2) - 6
+
+        for linea in self.hud:
+            self.pantalla.blit(linea, (12, y))
+            y += linea.get_height() + 2
+
+    def _dibujar_clima(self, juego: Juego) -> None:
+        """Partículas de lluvia o nieve según el clima del estadio."""
+        clima = juego.estadio.clima
+
+        if clima is Clima.DESPEJADO:
+            return
+
+        if not hasattr(self, "_particulas_clima") or self._particulas_clima[0] is not clima:
+            # Partículas fijas por clima: se crean una vez y caen
+            # siempre; el sorteo usa semilla determinista.
+            aleatorio = random.Random(11)
+            self._particulas_clima = (
+                clima,
+                [
+                    (
+                        aleatorio.randrange(ANCHO),
+                        aleatorio.randrange(ALTO),
+                        aleatorio.uniform(0.6, 1.0),
+                    )
+                    for _ in range(90)
+                ],
+            )
+
+        _clima, particulas = self._particulas_clima
+
+        if clima is Clima.LLUVIA:
+            for indice, (x, y, velocidad) in enumerate(particulas):
+                y += 17.0 * velocidad
+                x -= 2.0
+
+                if y > ALTO:
+                    y -= ALTO + 20
+                    x += 60
+
+                particulas[indice] = (x % ANCHO, y, velocidad)
+                pygame.draw.line(
+                    self.pantalla,
+                    (175, 205, 235),
+                    (x, y),
+                    (x + 2, y - 12),
+                    2,
+                )
+        else:
+            for indice, (x, y, velocidad) in enumerate(particulas):
+                y += 2.2 * velocidad
+                x += math.sin((y + indice * 13) * 0.05) * 0.6
+
+                if y > ALTO:
+                    y -= ALTO + 10
+
+                particulas[indice] = (x % ANCHO, y, velocidad)
+                pygame.draw.circle(
+                    self.pantalla,
+                    BLANCO,
+                    (round(x), round(y)),
+                    2,
+                )
 
     def _dibujar_mensaje_gol(self, juego: Juego) -> None:
         if juego.ultimo_gol is None:
@@ -197,10 +456,36 @@ class Vista:
             mensaje,
             mensaje.get_rect(center=self.POSICION_MENSAJE_GOL),
         )
+        # Narración del gol, debajo del aviso de continuar.
+        comentario = juego.comentario_gol
+
+        if comentario:
+            superficie = self._comentario_gol(comentario)
+            self.pantalla.blit(
+                superficie,
+                superficie.get_rect(
+                    center=(ANCHO // 2, self.POSICION_CONTINUAR[1] + 34)
+                ),
+            )
+
         self.pantalla.blit(
             self.superficie_continuar,
             self.superficie_continuar.get_rect(center=self.POSICION_CONTINUAR),
         )
+
+    def _comentario_gol(self, texto: str) -> pygame.Surface:
+        """El comentario del narrador, con fondo oscuro y en caché."""
+        if texto not in self._comentarios_cache:
+            self._comentarios_cache[texto] = self._crear_superficie_con_fondo(
+                texto,
+                self.fuente_instrucciones,
+                CIAN,
+                padding_x=14,
+                padding_y=6,
+                radio=8,
+            )
+
+        return self._comentarios_cache[texto]
 
     def _dibujar_mensaje_repeticion(self) -> None:
         """Cartela de repetición en curso y cómo saltarla."""
@@ -217,8 +502,24 @@ class Vista:
             ),
         )
 
-    def _dibujar_mensaje_estado(self, estado: Estado) -> None:
-        """Mensaje de descanso o final del partido."""
+    def _dibujar_mensaje_corner(self) -> None:
+        """Cartela del saque de esquina mientras se coloca el balón."""
+        self.pantalla.blit(
+            self.superficie_corner,
+            self.superficie_corner.get_rect(
+                center=self.POSICION_REPETICION
+            ),
+        )
+        self.pantalla.blit(
+            self.superficie_continuar,
+            self.superficie_continuar.get_rect(
+                center=self.POSICION_CONTINUAR
+            ),
+        )
+
+    def _dibujar_mensaje_estado(self, juego: Juego) -> None:
+        """Mensaje de descanso o final, con las cifras del partido."""
+        estado = juego.estado
         panel = self.paneles_estado[estado]
         self.pantalla.blit(
             panel,
@@ -230,12 +531,44 @@ class Vista:
                 center=self.POSICION_MENSAJE_GOL
             ),
         )
+        texto_continuar = self.textos_estado[estado]
+
+        if estado is Estado.FINAL and juego.texto_final:
+            # Los modos sustituyen el aviso fijo por su propio desenlace.
+            texto_continuar = self.fuente_instrucciones.render(
+                juego.texto_final,
+                True,
+                BLANCO,
+            )
+
         self.pantalla.blit(
-            self.textos_estado[estado],
-            self.textos_estado[estado].get_rect(
-                center=self.POSICION_CONTINUAR
-            ),
+            texto_continuar,
+            texto_continuar.get_rect(center=self.POSICION_CONTINUAR),
         )
+
+        # Estadísticas del partido, bajo el panel del mensaje.
+        y = ALTO // 2 + 110
+
+        for linea in juego.estadisticas.lineas():
+            texto = self.fuente_hud.render(linea, True, BLANCO)
+            self.pantalla.blit(
+                texto,
+                texto.get_rect(center=(ANCHO // 2, y)),
+            )
+            y += texto.get_height() + 4
+
+        # Los trofeos recién ganados se anuncian en el final.
+        for nombre in juego.trofeos_nuevos:
+            texto = self.fuente_instrucciones.render(
+                f"¡TROFEO DESBLOQUEADO: {nombre}!",
+                True,
+                AMARILLO,
+            )
+            self.pantalla.blit(
+                texto,
+                texto.get_rect(center=(ANCHO // 2, y + 10)),
+            )
+            y += texto.get_height() + 8
 
     # --------------------------------------------------
     # Piezas pre-renderizadas y cachés
@@ -330,6 +663,8 @@ class Vista:
             juego.escudo.color,
             juego.escudo.color_borde,
             juego.escudo.forma,
+            juego.uniformes[Equipo.LOCAL].camiseta,
+            juego.uniformes[Equipo.VISITANTE].camiseta,
         )
 
         if self._marcador_cache is None or self._marcador_cache[0] != clave:
@@ -345,22 +680,33 @@ class Vista:
         )
 
     def _crear_superficie_marcador(self, juego: Juego) -> pygame.Surface:
-        """Panel del marcador con el escudo del jugador y el del rival.
+        """Bug televisivo: escudos, resultado, colores y aviso en vivo.
 
-        Cada nivel es un escudo rival distinto: la imagen del escudo del
-        nivel aparece a la derecha y el escudo personalizado del jugador
-        a la izquierda, junto al resultado y al nombre del club.
+        Inspirado en las transmisiones deportivas: franja con el color
+        de la camiseta de cada equipo en su borde, escudos a los lados
+        del resultado y un punto rojo de emisión en directo.
         """
         nivel = nivel_por_numero(juego.nivel)
         texto = (
-            f"NIVEL {juego.nivel}   LOCAL {juego.goles_local} - "
+            f"LOCAL {juego.goles_local} - "
             f"{juego.goles_visitante} VISITANTE"
         )
         texto_render = self.fuente_marcador.render(texto, True, BLANCO)
-        subtitulo = self.fuente_hud.render(nivel.rival, True, BLANCO)
+        ronda = (
+            juego.torneo.etiqueta()
+            if juego.torneo is not None
+            else f"NIVEL {juego.nivel}"
+        )
+        subtitulo = self.fuente_hud.render(
+            f"{ronda} · {nivel.rival}",
+            True,
+            BLANCO,
+        )
 
         escudo_rival = self._escudo_rival_escalado(juego.nivel)
         ancho_escudo_jugador = round(Escudo.TAMANO * 2 * 1.05)
+        ancho_en_vivo = 84
+        ancho_franja = 6
 
         separacion = 14
         padding_x = 22
@@ -371,6 +717,8 @@ class Vista:
             + max(texto_render.get_width(), subtitulo.get_width())
             + separacion
             + escudo_rival.get_width()
+            + separacion
+            + ancho_en_vivo
             + padding_x
         )
         alto = self.ALTO_ESCUDO_MARCADOR + subtitulo.get_height() + 18
@@ -384,14 +732,17 @@ class Vista:
         panel.blit(
             escudo_rival,
             escudo_rival.get_rect(
-                midright=(ancho - padding_x, centro_y),
+                midright=(
+                    ancho - padding_x - ancho_en_vivo,
+                    centro_y,
+                ),
             ),
         )
 
         centro_texto = padding_x + ancho_escudo_jugador + separacion
         ancho_texto = ancho - 2 * (
             padding_x + ancho_escudo_jugador + separacion
-        )
+        ) - ancho_en_vivo
         panel.blit(
             texto_render,
             texto_render.get_rect(
@@ -403,6 +754,27 @@ class Vista:
             subtitulo.get_rect(
                 midtop=(centro_texto + ancho_texto // 2, 9 + texto_render.get_height() + 2),
             ),
+        )
+
+        # Aviso de emisión en directo, con su punto rojo.
+        punto_x = ancho - padding_x - ancho_en_vivo + separacion
+        pygame.draw.circle(panel, ROJO_ENERGIA, (punto_x, centro_y), 5)
+        en_vivo = self.fuente_hud.render("EN VIVO", True, BLANCO)
+        panel.blit(
+            en_vivo,
+            en_vivo.get_rect(midleft=(punto_x + 12, centro_y)),
+        )
+
+        # Franjas del borde con el color de la camiseta de cada equipo.
+        pygame.draw.rect(
+            panel,
+            juego.uniformes[Equipo.LOCAL].camiseta,
+            (0, 0, ancho_franja, alto),
+        )
+        pygame.draw.rect(
+            panel,
+            juego.uniformes[Equipo.VISITANTE].camiseta,
+            (ancho - ancho_franja, 0, ancho_franja, alto),
         )
 
         return panel.convert_alpha()
@@ -438,8 +810,19 @@ class Vista:
         self.pantalla.blit(superficie, self.POSICION_TIEMPO)
 
     def _dibujar_energia(self, juego: Juego) -> None:
-        """Barra de energía del jugador, justo debajo del reloj."""
+        """Barras de energía: una por jugador controlado en el modo."""
         x, y = self.POSICION_ENERGIA
+        self._barra_energia(x, y, juego.energia_actual)
+
+        if juego.modo is ModoJuego.DOS_JUGADORES:
+            self._barra_energia(
+                x,
+                y + self.ALTO_ENERGIA + 8,
+                juego.energia_2,
+            )
+
+    def _barra_energia(self, x: float, y: float, energia: float) -> None:
+        """Dibuja una barra de energía con su marco."""
         ancho = self.ANCHO_ENERGIA
         alto = self.ALTO_ENERGIA
 
@@ -452,7 +835,7 @@ class Vista:
 
         proporcion = max(
             0.0,
-            min(1.0, juego.energia_actual / ENERGIA_MAXIMA),
+            min(1.0, energia / ENERGIA_MAXIMA),
         )
         relleno = round((ancho - 4) * proporcion)
 

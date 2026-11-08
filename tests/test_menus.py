@@ -16,10 +16,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pygame
 
-from futbol_silueta.configuracion import ALTO, ANCHO, Equipo, Rol
+from futbol_silueta.configuracion import (
+    ALTO,
+    ANCHO,
+    SUSTITUCIONES_MAXIMAS,
+    TITULARES_POR_EQUIPO,
+    Equipo,
+    Rol,
+)
 from futbol_silueta.escudos import ESCUDO_PRESETS, FORMAS_ESCUDO
-from futbol_silueta.estadios import Cesped, Diseno, Momento
+from futbol_silueta.estadios import Cesped, Clima, Diseno, Momento
 from futbol_silueta.menus import Accion, Menus, Pantalla
+from futbol_silueta.plantilla import suplentes_por_defecto
+from futbol_silueta.uniformes import UNIFORME_PRESETS
 
 
 class MenusTests(unittest.TestCase):
@@ -72,13 +81,26 @@ class MenusTests(unittest.TestCase):
 
         self.menus.procesar_evento(evento)
 
+        # JUGAR abre ahora el selector de modos; desde él, "Campaña"
+        # arranca la partida como antes.
+        self.assertIs(self.menus.pantalla, Pantalla.MODOS)
+        self.assertIsNone(self.menus.consumir_accion())
+
+        rect_modos = self.menus.botones[Pantalla.MODOS][0].rect
+        self.menus.procesar_evento(
+            self._evento_raton(
+                pygame.MOUSEBUTTONDOWN,
+                rect_modos.center,
+            )
+        )
+
         self.assertIs(self.menus.pantalla, Pantalla.PARTIDO)
         self.assertIs(self.menus.consumir_accion(), Accion.JUGAR)
         self.assertIsNone(self.menus.consumir_accion())
 
     def test_click_en_todos_los_botones_principales(self) -> None:
         casos = (
-            (0, Pantalla.PARTIDO, Accion.JUGAR),
+            (0, Pantalla.MODOS, None),
             (1, Pantalla.OPCIONES, None),
             (2, Pantalla.AYUDA, None),
             (3, Pantalla.PRINCIPAL, Accion.SALIR),
@@ -162,8 +184,9 @@ class MenusTests(unittest.TestCase):
             "Sonido: DESACTIVADO",
         )
 
-        # "Volver" es el séptimo botón de Opciones, tras Tácticas,
-        # Uniformes, escudo, el editor de jugadores y Estadio.
+        # "Volver" es el octavo botón de Opciones, tras Tácticas,
+        # Uniformes, escudo, el editor, Estadio y Palmarés.
+        self.menus.procesar_tecla(pygame.K_DOWN)
         self.menus.procesar_tecla(pygame.K_DOWN)
         self.menus.procesar_tecla(pygame.K_DOWN)
         self.menus.procesar_tecla(pygame.K_DOWN)
@@ -280,6 +303,10 @@ class MenusTests(unittest.TestCase):
         self.menus.procesar_tecla(pygame.K_RETURN)
         self.assertIs(self.menus.estadio_seleccionado.momento, Momento.NOCHE)
 
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Clima
+        self.menus.procesar_tecla(pygame.K_RIGHT)
+        self.assertIs(self.menus.estadio_seleccionado.clima, Clima.LLUVIA)
+
         self.menus.procesar_tecla(pygame.K_DOWN)  # Diseño
         self.menus.procesar_tecla(pygame.K_RIGHT)
         self.assertIs(self.menus.estadio_seleccionado.diseno, Diseno.RAYAS)
@@ -294,11 +321,94 @@ class MenusTests(unittest.TestCase):
         }
         self.assertEqual(etiquetas[Accion.CESPED], "Césped: OSCURO")
         self.assertEqual(etiquetas[Accion.MOMENTO], "Momento: NOCHE")
+        self.assertEqual(etiquetas[Accion.CLIMA], "Clima: LLUVIA")
         self.assertEqual(etiquetas[Accion.DISENO], "Diseño: RAYAS")
         self.assertEqual(etiquetas[Accion.GRADAS], "Gradas: SIN AFICIONADOS")
 
         self.menus.procesar_tecla(pygame.K_ESCAPE)
         self.assertIs(self.menus.pantalla, Pantalla.OPCIONES)
+
+    def test_el_palmares_se_abre_y_vuelve(self) -> None:
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Opciones
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        for _ in range(6):
+            self.menus.procesar_tecla(pygame.K_DOWN)  # Palmarés
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        self.assertIs(self.menus.pantalla, Pantalla.PALMARES)
+
+        # Se dibuja con la tabla, el historial y los trofeos vacíos.
+        self.menus.dibujar(self.pantalla)
+
+        self.menus.procesar_tecla(pygame.K_ESCAPE)
+        self.assertIs(self.menus.pantalla, Pantalla.OPCIONES)
+
+    def test_flecha_izquierda_cicla_hacia_atras(self) -> None:
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Opciones
+        self.menus.procesar_tecla(pygame.K_RETURN)
+        for _ in range(5):
+            self.menus.procesar_tecla(pygame.K_DOWN)  # Estadio
+        self.menus.procesar_tecla(pygame.K_RETURN)
+
+        self.menus.procesar_tecla(pygame.K_LEFT)  # Césped
+        self.assertIs(
+            self.menus.estadio_seleccionado.cesped,
+            Cesped.ARTIFICIAL,
+        )
+
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Momento
+        self.menus.procesar_tecla(pygame.K_LEFT)
+        self.assertIs(self.menus.estadio_seleccionado.momento, Momento.NOCHE)
+
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Clima
+        self.menus.procesar_tecla(pygame.K_LEFT)
+
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Diseño
+        self.menus.procesar_tecla(pygame.K_LEFT)
+        self.assertIs(self.menus.estadio_seleccionado.diseno, Diseno.CIRCULOS)
+
+        # El local viste de rojo (tercer preset); ← pasa al anterior.
+        self.menus._ejecutar(Accion.OPCIONES)
+        self.menus._ejecutar(Accion.UNIFORME)
+        self.menus.procesar_tecla(pygame.K_DOWN)  # Camiseta
+        self.menus.procesar_tecla(pygame.K_LEFT)
+        self.assertEqual(
+            self.menus.uniformes_seleccionados[Equipo.LOCAL].camiseta,
+            UNIFORME_PRESETS[1][1],
+        )
+
+    def test_el_editor_acepta_espacios_en_el_nombre(self) -> None:
+        self.menus._ejecutar(Accion.EDITOR)
+        self.menus._ejecutar(Accion.EDITOR_NOMBRE)
+
+        for _ in range(12):
+            self.menus.procesar_tecla(pygame.K_BACKSPACE)
+        for tecla in (
+            pygame.K_a,
+            pygame.K_n,
+            pygame.K_a,
+            pygame.K_SPACE,
+            pygame.K_m,
+            pygame.K_a,
+            pygame.K_r,
+            pygame.K_i,
+            pygame.K_a,
+        ):
+            self.menus.procesar_tecla(tecla)
+        self.menus.procesar_tecla(pygame.K_RETURN)
+
+        self.assertEqual(
+            self.menus.plantillas_seleccionadas[Equipo.LOCAL][0].nombre,
+            "Ana maria",
+        )
+
+    def test_el_editor_reconstruye_una_plantilla_vacia(self) -> None:
+        self.menus.plantillas_editables[Equipo.LOCAL] = []
+        self.menus._ejecutar(Accion.EDITOR)
+        self.menus._ejecutar(Accion.CICLAR_DORSAL)
+
+        local = self.menus.plantillas_seleccionadas[Equipo.LOCAL]
+        self.assertEqual(len(local), 11)
+        self.assertEqual(local[0].dorsal, 2)
 
     def test_ayuda_muestra_los_controles_y_vuelve(self) -> None:
         self.menus.procesar_tecla(pygame.K_DOWN)
@@ -352,6 +462,8 @@ class MenusTests(unittest.TestCase):
             Pantalla.EDITOR,
             Pantalla.TACTICA,
             Pantalla.ESTADIO,
+            Pantalla.PALMARES,
+            Pantalla.SUSTITUCIONES,
             Pantalla.AYUDA,
             Pantalla.PAUSA,
         ):
@@ -360,6 +472,84 @@ class MenusTests(unittest.TestCase):
             self.menus.dibujar(self.pantalla)
 
         self.assertIsNotNone(pygame.display.get_surface())
+
+    def test_sustituciones_elegir_y_confirmar(self) -> None:
+        menus = self.menus
+        menus.abrir_sustituciones()
+
+        self.assertIs(menus.pantalla, Pantalla.SUSTITUCIONES)
+        suplentes = suplentes_por_defecto(Equipo.LOCAL)
+        self.assertEqual(
+            len(menus.botones_actuales),
+            TITULARES_POR_EQUIPO + len(suplentes) + 2,
+        )
+
+        # Sale el delantero del hueco 9 (dorsal 10); entra el primer
+        # suplente (dorsal 12), marcando ambos y confirmando.
+        menus._ejecutar(Accion.ELEGIR_SALE, menus.botones_actuales[9])
+        menus._ejecutar(
+            Accion.ELEGIR_ENTRA,
+            menus.botones_actuales[TITULARES_POR_EQUIPO],
+        )
+        menus._ejecutar(Accion.HACER_CAMBIO)
+
+        self.assertEqual(menus.cambios_usados[Equipo.LOCAL], 1)
+        entrante = menus.plantillas_editables[Equipo.LOCAL][9]
+
+        self.assertEqual(entrante.dorsal, suplentes[0].dorsal)
+        self.assertEqual(entrante.nombre, suplentes[0].nombre)
+        self.assertIs(entrante.rol, Rol.DELANTERO)
+        saliente = menus.suplentes_editables[Equipo.LOCAL][0]
+        self.assertEqual(saliente.dorsal, 10)
+
+        sustitucion = menus.consumir_sustitucion()
+        self.assertIsNotNone(sustitucion)
+        assert sustitucion is not None
+        equipo, hueco, dorsal_saliente, ficha = sustitucion
+
+        self.assertIs(equipo, Equipo.LOCAL)
+        self.assertEqual(hueco, 9)
+        self.assertEqual(dorsal_saliente, 10)
+        self.assertEqual(ficha.dorsal, suplentes[0].dorsal)
+        self.assertIsNone(menus.consumir_sustitucion())
+
+    def test_sustituciones_respetan_el_limite(self) -> None:
+        menus = self.menus
+
+        for _ in range(SUSTITUCIONES_MAXIMAS + 1):
+            menus.abrir_sustituciones()
+            menus._ejecutar(Accion.ELEGIR_SALE, menus.botones_actuales[10])
+            menus._ejecutar(
+                Accion.ELEGIR_ENTRA,
+                menus.botones_actuales[TITULARES_POR_EQUIPO],
+            )
+            menus._ejecutar(Accion.HACER_CAMBIO)
+
+        self.assertEqual(
+            menus.cambios_usados[Equipo.LOCAL],
+            SUSTITUCIONES_MAXIMAS,
+        )
+
+    def test_reiniciar_sustituciones_vuelve_al_banquillo_original(self) -> None:
+        menus = self.menus
+        menus.abrir_sustituciones()
+        menus._ejecutar(Accion.ELEGIR_SALE, menus.botones_actuales[0])
+        menus._ejecutar(
+            Accion.ELEGIR_ENTRA,
+            menus.botones_actuales[TITULARES_POR_EQUIPO],
+        )
+        menus._ejecutar(Accion.HACER_CAMBIO)
+
+        self.assertEqual(menus.cambios_usados[Equipo.LOCAL], 1)
+
+        menus.reiniciar_sustituciones()
+
+        self.assertEqual(menus.cambios_usados[Equipo.LOCAL], 0)
+        self.assertEqual(
+            menus.suplentes_editables[Equipo.LOCAL],
+            suplentes_por_defecto(Equipo.LOCAL),
+        )
+        self.assertIsNone(menus.consumir_sustitucion())
 
 
 if __name__ == "__main__":
