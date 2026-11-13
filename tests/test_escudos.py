@@ -18,7 +18,6 @@ import pygame
 
 from futbol_silueta.escudos import (
     COLORES_ESCUDO_POR_NIVEL,
-    ESCUDO_PRESETS,
     FORMAS_ESCUDO,
     Escudo,
     FormaEscudo,

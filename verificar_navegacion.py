@@ -232,7 +232,13 @@ def flujo_robustez() -> None:
     )
     menus._ejecutar(Accion.CAMPANA)
     comprobar(
-        "modos -> campaña entra al partido",
+        "modos -> campaña presenta el estadio rival",
+        menus.pantalla,
+        Pantalla.PRESENTACION,
+    )
+    menus._ejecutar(Accion.COMENZAR)
+    comprobar(
+        "presentación -> comenzar entra al partido",
         menus.pantalla,
         Pantalla.PARTIDO,
     )
@@ -356,7 +362,7 @@ def flujo_uniformes_en_partido() -> None:
         for jugador in juego.jugadores:
             jugador.dibujar(superficie)
         print("ok     sprites con uniforme se dibujan sin errores")
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         print(f"FALLO  sprites con uniforme: {error}")
         fallos.append("sprites con uniforme")
 
@@ -537,7 +543,7 @@ def flujo_editor_en_partido() -> None:
         menus.pantalla = Pantalla.EDITOR
         menus.dibujar(superficie)
         print("ok     partido y editor se simulan/dibujan sin errores")
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         print(f"FALLO  simulación o editor: {error}")
         fallos.append("simulación o editor")
 
@@ -572,13 +578,12 @@ def flujo_repeticion() -> None:
         Estado.REPETICION,
     )
 
-    superficie = pygame.Surface((ANCHO, ALTO))
     try:
         for _ in range(5):
             juego.actualizar(1 / 60)
             vista.dibujar(juego)
         print("ok     la repetición se simula y dibuja sin errores")
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         print(f"FALLO  repetición en pantalla: {error}")
         fallos.append("repetición en pantalla")
 
@@ -651,6 +656,48 @@ def flujo_estadio() -> None:
         "Clima: LLUVIA",
     )
 
+    menus._ejecutar(Accion.GALERIA_ESTADIOS)
+    comprobar(
+        "estadio -> galería de estadios",
+        menus.pantalla,
+        Pantalla.GALERIA,
+    )
+    comprobar_valor(
+        "la galería empieza en el estadio del nivel 1",
+        menus.estadio_galeria.nivel,
+        1,
+    )
+    menus._ejecutar(Accion.SIGUIENTE_ESTADIO)
+    comprobar_valor(
+        "la galería avanza al estadio del nivel 2",
+        menus.estadio_galeria.nivel,
+        2,
+    )
+    menus._ejecutar(
+        Accion.VISTA_ESTADIO,
+        menus.botones[Pantalla.GALERIA][3],
+    )
+    comprobar_valor(
+        "la galería cambia a la segunda vista",
+        menus.indice_vista_galeria,
+        1,
+    )
+
+    superficie_galeria = pygame.Surface((ANCHO, ALTO))
+    try:
+        menus.dibujar(superficie_galeria)
+        print("ok     la galería de estadios se dibuja sin errores")
+    except Exception as error:
+        print(f"FALLO  galería en pantalla: {error}")
+        fallos.append("galería en pantalla")
+
+    menus._ejecutar(Accion.VOLVER)
+    comprobar(
+        "galería -> volver regresa a estadio",
+        menus.pantalla,
+        Pantalla.ESTADIO,
+    )
+
     vista = Vista(pygame.display.get_surface())
     juego = Juego(vista)
     juego.personalizar_estadio(estadio)
@@ -660,7 +707,7 @@ def flujo_estadio() -> None:
         menus.pantalla = Pantalla.ESTADIO
         menus.dibujar(superficie)
         print("ok     el estadio nocturno se dibuja sin errores")
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         print(f"FALLO  estadio en pantalla: {error}")
         fallos.append("estadio en pantalla")
 
@@ -669,6 +716,124 @@ def flujo_estadio() -> None:
         "ESC en estadio regresa a opciones",
         menus.pantalla,
         Pantalla.OPCIONES,
+    )
+
+
+def flujo_entrenamientos_y_tienda() -> None:
+    """Submenú de entrenamientos, ejercicios y tienda de estadios."""
+    menus = nueva()
+    menus._ejecutar(Accion.JUGAR)
+    menus._ejecutar(Accion.ENTRENAMIENTO)
+    comprobar(
+        "modos -> entrenamiento abre el submenú",
+        menus.pantalla,
+        Pantalla.ENTRENAMIENTOS,
+    )
+    comprobar_valor(
+        "el submenú ofrece los tres ejercicios",
+        [boton.accion for boton in menus.botones[Pantalla.ENTRENAMIENTOS][:3]],
+        [Accion.TIROS, Accion.PENALES, Accion.DOS_CONTRA_UNO],
+    )
+
+    menus._ejecutar(Accion.TIROS)
+    comprobar(
+        "elegir tiros abre la sesión activa",
+        menus.pantalla,
+        Pantalla.ENTRENAMIENTO_ACTIVO,
+    )
+    menus.abrir_entrenamientos()
+    menus._ejecutar(Accion.TIENDA_ESTADIOS)
+    comprobar(
+        "entrenamientos -> tienda de estadios",
+        menus.pantalla,
+        Pantalla.TIENDA_ESTADIOS,
+    )
+
+    # Sin monedas no se compra; con ellas se descuenta y se equipa.
+    menus.monedas = 10
+    menus._ejecutar(
+        Accion.COMPRAR_ESTADIO,
+        Boton(
+            pygame.Rect(0, 0, 1, 1),
+            "",
+            Accion.COMPRAR_ESTADIO,
+            valor="amanecer",
+        ),
+    )
+    comprobar_valor(
+        "sin monedas el estadio sigue bloqueado",
+        "amanecer" in menus.estadios_comprados,
+        False,
+    )
+    comprobar_valor(
+        "sin monedas se muestra el aviso",
+        menus.mensaje_tienda_error,
+        True,
+    )
+
+    menus.monedas = 300
+    menus._ejecutar(
+        Accion.COMPRAR_ESTADIO,
+        Boton(
+            pygame.Rect(0, 0, 1, 1),
+            "",
+            Accion.COMPRAR_ESTADIO,
+            valor="amanecer",
+        ),
+    )
+    comprobar_valor(
+        "comprar descuenta el precio",
+        menus.monedas,
+        50,
+    )
+    comprobar_valor(
+        "comprar desbloquea y equipa el estadio",
+        (
+            "amanecer" in menus.estadios_comprados,
+            menus.estadio_seleccionado.diseno,
+        ),
+        (True, Diseno.RAYAS),
+    )
+
+    # Un estadio comprado se puede volver a equipar.
+    menus.monedas = 900
+    menus._ejecutar(
+        Accion.COMPRAR_ESTADIO,
+        Boton(
+            pygame.Rect(0, 0, 1, 1),
+            "",
+            Accion.COMPRAR_ESTADIO,
+            valor="nocturno",
+        ),
+    )
+    menus._ejecutar(
+        Accion.EQUIPAR_ESTADIO,
+        Boton(
+            pygame.Rect(0, 0, 1, 1),
+            "",
+            Accion.EQUIPAR_ESTADIO,
+            valor="amanecer",
+        ),
+    )
+    comprobar_valor(
+        "equipar recupera el estadio comprado",
+        menus.estadio_seleccionado.diseno,
+        Diseno.RAYAS,
+    )
+
+    superficie = pygame.Surface((ANCHO, ALTO))
+    try:
+        menus.dibujar(superficie)
+        print("ok     la tienda de estadios se dibuja sin errores")
+    except Exception as error:
+        print(f"FALLO  tienda en pantalla: {error}")
+        fallos.append("tienda en pantalla")
+
+    menus.procesar_tecla(pygame.K_ESCAPE)
+    comprobar(
+        "ESC en la tienda regresa al submenú",
+        menus.pantalla,
+        Pantalla.ENTRENAMIENTOS,
     )
 
 
@@ -690,7 +855,7 @@ def flujo_palmares() -> None:
     try:
         menus.dibujar(superficie)
         print("ok     el palmarés se dibuja sin errores")
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         print(f"FALLO  palmarés en pantalla: {error}")
         fallos.append("palmarés en pantalla")
 
@@ -774,11 +939,10 @@ def flujo_corner() -> None:
     )
     comprobar_valor("el córner es para el local", juego.esquina, Equipo.LOCAL)
 
-    superficie = pygame.Surface((ANCHO, ALTO))
     try:
         vista.dibujar(juego)
         print("ok     la cartela de córner se dibuja sin errores")
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         print(f"FALLO  cartela de córner: {error}")
         fallos.append("cartela de córner")
 
@@ -876,11 +1040,10 @@ def flujo_presentacion() -> None:
 
     # Viento y confeti se dibujan sin errores.
     juego.viento.update(30.0, 0.0)
-    superficie = pygame.Surface((ANCHO, ALTO))
     try:
         vista.dibujar(juego)
         print("ok     cámara, confeti y viento se dibujan sin errores")
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         print(f"FALLO  presentación: {error}")
         fallos.append("presentación")
 
@@ -924,6 +1087,7 @@ def main() -> None:
     flujo_editor_en_partido()
     flujo_repeticion()
     flujo_estadio()
+    flujo_entrenamientos_y_tienda()
     flujo_palmares()
     flujo_cambio_jugador()
     flujo_corner()

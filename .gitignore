@@ -36,3 +36,6 @@ Thumbs.db
 # Base de datos local del juego
 *.sqlite
 *.sqlite3
+
+# Material de origen de las imágenes (fotos originales sin optimizar)
+imagenes/fuentes/

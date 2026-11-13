@@ -12,6 +12,7 @@ from .configuracion import (
     PORTERIA_INFERIOR,
     PORTERIA_SUPERIOR,
     RADIO_BALON,
+    Color,
     Equipo,
 )
 
@@ -83,16 +84,6 @@ def acotar_posicion(posicion: pygame.Vector2, margen: float) -> None:
     )
 
 
-def acotar_al_campo(
-    posicion: pygame.Vector2,
-    margen: float,
-) -> pygame.Vector2:
-    """Devuelve una copia de ``posicion`` limitada al campo."""
-    copia = posicion.copy()
-    acotar_posicion(copia, margen)
-    return copia
-
-
 def dentro_de_porteria(y: float) -> bool:
     """Indica si la coordenada ``y`` está dentro de la portería."""
     return (
@@ -116,3 +107,32 @@ def equipo_que_anota(x: float, y: float) -> Equipo | None:
 def equipo_rival(equipo: Equipo) -> Equipo:
     """Devuelve el equipo contrario."""
     return Equipo.VISITANTE if equipo is Equipo.LOCAL else Equipo.LOCAL
+
+
+class CacheTextos:
+    """Caché de textos renderizados compartida por las pantallas.
+
+    La clave incluye ``id(fuente)`` porque la identidad de la fuente basta
+    para distinguir tamaños y estilos durante una misma sesión de pygame.
+    """
+
+    def __init__(self) -> None:
+        self._superficies: dict[
+            tuple[str, int, Color],
+            pygame.Surface,
+        ] = {}
+
+    def __call__(
+        self,
+        texto: str,
+        fuente: pygame.font.Font,
+        color: Color,
+    ) -> pygame.Surface:
+        clave = (texto, id(fuente), color)
+        superficie = self._superficies.get(clave)
+
+        if superficie is None:
+            superficie = fuente.render(texto, True, color)
+            self._superficies[clave] = superficie
+
+        return superficie

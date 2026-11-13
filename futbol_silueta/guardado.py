@@ -49,6 +49,7 @@ from .plantilla import (
     normalizar_plantilla,
     plantilla_por_defecto,
 )
+from .tienda_estadios import ESTADIO_GRATIS, ids_validos
 from .uniformes import UNIFORMES_POR_DEFECTO, Uniforme
 from .utilidades import acotar
 
@@ -120,6 +121,14 @@ def _booleano_valido(valor: object, defecto: bool) -> bool:
         return bool(int(valor))  # type: ignore[arg-type]
     except (TypeError, ValueError, OverflowError):
         return defecto
+
+
+def _entero_no_negativo(valor: object, defecto: int) -> int:
+    """Entero saneado de la base; nunca negativo ni fuera de rango."""
+    try:
+        return max(0, int(valor))  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return max(0, int(defecto))
 
 
 def _color_valido(valor: object, defecto: Color) -> Color:
@@ -222,7 +231,8 @@ class Guardado:
                     estadio_diseno TEXT NOT NULL DEFAULT 'clasico',
                     estadio_gradas INTEGER NOT NULL DEFAULT 1,
                     estadio_clima TEXT NOT NULL DEFAULT 'despejado',
-                    nivel_campana INTEGER NOT NULL DEFAULT 1
+                    nivel_campana INTEGER NOT NULL DEFAULT 1,
+                    monedas INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
@@ -280,6 +290,13 @@ class Guardado:
                 )
                 """
             )
+            self.conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS estadios_comprados (
+                    id TEXT PRIMARY KEY
+                )
+                """
+            )
 
     def _migrar(self) -> None:
         """Añade las columnas nuevas a bases de versiones anteriores.
@@ -302,6 +319,7 @@ class Guardado:
                 ("estadio_gradas", "INTEGER NOT NULL DEFAULT 1"),
                 ("estadio_clima", "TEXT NOT NULL DEFAULT 'despejado'"),
                 ("nivel_campana", "INTEGER NOT NULL DEFAULT 1"),
+                ("monedas", "INTEGER NOT NULL DEFAULT 0"),
             ):
                 if nombre not in columnas:
                     self.conexion.execute(
@@ -339,6 +357,15 @@ class Guardado:
 
             if not isinstance(estadio, Estadio):
                 estadio = ESTADIO_POR_DEFECTO
+
+            monedas = max(0, int(getattr(menus, "monedas", 0)))
+            comprados = {ESTADIO_GRATIS}
+
+            for identificador in getattr(menus, "estadios_comprados", ()):
+                texto = str(identificador)
+
+                if texto in ids_validos():
+                    comprados.add(texto)
 
             if nivel is None:
                 nivel = self.nivel_guardado()
@@ -427,6 +454,7 @@ class Guardado:
                     ESTADIO_POR_DEFECTO.clima,
                 ).value,
                 acotar(int(nivel), 1, NIVEL_MAXIMO),
+                monedas,
             )
         except (AttributeError, KeyError, TypeError, ValueError):
             # Menús en un estado inesperado: se conserva lo ya guardado.
@@ -444,8 +472,8 @@ class Guardado:
                         visitante_camiseta, visitante_pantalon,
                         visitante_medias, estadio_cesped,
                         estadio_momento, estadio_diseno, estadio_gradas,
-                        estadio_clima, nivel_campana
-                    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        estadio_clima, nivel_campana, monedas
+                    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     parametros,
                 )
@@ -481,6 +509,11 @@ class Guardado:
                     ) VALUES (?, ?, ?)
                     """,
                     resultados,
+                )
+                self.conexion.execute("DELETE FROM estadios_comprados")
+                self.conexion.executemany(
+                    "INSERT INTO estadios_comprados (id) VALUES (?)",
+                    [(identificador,) for identificador in sorted(comprados)],
                 )
         except sqlite3.Error:
             self._desactivar()
@@ -614,6 +647,14 @@ class Guardado:
                     "SELECT id FROM trofeos"
                 )
             }
+            monedas = _entero_no_negativo(fila["monedas"], menus.monedas)
+            comprados = {
+                str(fila_e["id"])
+                for fila_e in self.conexion.execute(
+                    "SELECT id FROM estadios_comprados"
+                )
+            } & ids_validos()
+            comprados.add(ESTADIO_GRATIS)
         except (
             sqlite3.Error,
             AttributeError,
@@ -637,12 +678,12 @@ class Guardado:
         }
 
         menus.adoptar_estadio(estadio)
+        menus.monedas = monedas
+        menus.estadios_comprados = comprados
         menus.tabla_posiciones = tabla
         menus.historial = historial
         menus.trofeos = trofeos
-        menus._actualizar_etiqueta_sonido()
-        menus._actualizar_etiquetas_uniforme()
-        menus._actualizar_etiquetas_editor()
+        menus.refrescar_etiquetas()
 
     def _cargar_tabla(self) -> TablaPosiciones:
         """La tabla de posiciones guardada; filas sanas, ceros por defecto."""
@@ -825,5 +866,5 @@ class Guardado:
 
         try:
             return deserializar_torneo(modo, json.loads(fila["datos"]))
-        except (ValueError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError, IndexError):
             return None

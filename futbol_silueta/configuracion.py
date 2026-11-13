@@ -34,7 +34,6 @@ Color = tuple[int, int, int]
 # 2. Colores
 # ============================================================
 
-VERDE: Color = (34, 139, 34)
 BLANCO: Color = (255, 255, 255)
 AMARILLO: Color = (255, 215, 0)
 NEGRO: Color = (20, 20, 20)
@@ -418,10 +417,6 @@ TITULARES_POR_EQUIPO = len(FORMACION)
 # Tamaño del banquillo: la plantilla completa queda en 18 futbolistas
 # (11 titulares + 7 suplentes), dentro del formato 18-23 del fútbol.
 NUMERO_SUPLENTES = 7
-
-# Máximo del formato del acta: 11 titulares + 12 suplentes. El sistema
-# admite banquillos hasta este tamaño aunque el juego arranque con 7.
-PLANTILLA_MAXIMA = TITULARES_POR_EQUIPO + 12
 
 # Cambios que puede hacer cada equipo por partido.
 SUSTITUCIONES_MAXIMAS = 5

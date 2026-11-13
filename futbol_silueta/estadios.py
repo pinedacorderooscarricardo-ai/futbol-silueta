@@ -15,7 +15,20 @@ from typing import NamedTuple, TypeVar
 
 import pygame
 
-from .configuracion import Color, FRICCION
+from .configuracion import (
+    ALTO,
+    ANCHO,
+    ANCHO_POSTE,
+    AREA_PENALTI_ALTO,
+    AREA_PENALTI_ANCHO,
+    BLANCO,
+    CAMPO_RECT,
+    PORTERIA_ALTO,
+    PORTERIA_SUPERIOR,
+    RADIO_CIRCULO_CENTRAL,
+    Color,
+    FRICCION,
+)
 
 T = TypeVar("T")
 
@@ -228,6 +241,96 @@ def dibujar_cesped(superficie: pygame.Surface, estadio: Estadio) -> None:
                 indice * grosor,
                 grosor,
             )
+
+
+def dibujar_lineas_campo(
+    superficie: pygame.Surface,
+    *,
+    red: bool = False,
+) -> None:
+    """Dibuja el perímetro, el círculo central, las áreas y las porterías.
+
+    ``red`` añade la malla del arco derecho, como en los entrenamientos.
+    """
+    pygame.draw.rect(superficie, BLANCO, CAMPO_RECT, 3)
+    pygame.draw.line(
+        superficie,
+        BLANCO,
+        (CAMPO_RECT.centerx, CAMPO_RECT.top),
+        (CAMPO_RECT.centerx, CAMPO_RECT.bottom),
+        2,
+    )
+    pygame.draw.circle(
+        superficie,
+        BLANCO,
+        (CAMPO_RECT.centerx, CAMPO_RECT.centery),
+        RADIO_CIRCULO_CENTRAL,
+        2,
+    )
+
+    # Áreas de penalti, en las dos bandas.
+    for x in (
+        CAMPO_RECT.left,
+        CAMPO_RECT.right - AREA_PENALTI_ANCHO,
+    ):
+        pygame.draw.rect(
+            superficie,
+            BLANCO,
+            (
+                x,
+                CAMPO_RECT.centery - AREA_PENALTI_ALTO // 2,
+                AREA_PENALTI_ANCHO,
+                AREA_PENALTI_ALTO,
+            ),
+            2,
+        )
+
+    # Porterías, a cada lado del campo.
+    for x in (CAMPO_RECT.left - ANCHO_POSTE, CAMPO_RECT.right):
+        pygame.draw.rect(
+            superficie,
+            BLANCO,
+            (x, PORTERIA_SUPERIOR, ANCHO_POSTE, PORTERIA_ALTO),
+            3,
+        )
+
+    if red:
+        for desplazamiento in range(10, PORTERIA_ALTO, 16):
+            pygame.draw.line(
+                superficie,
+                (210, 220, 230),
+                (
+                    CAMPO_RECT.right + ANCHO_POSTE,
+                    PORTERIA_SUPERIOR + desplazamiento,
+                ),
+                (
+                    CAMPO_RECT.right + 42,
+                    PORTERIA_SUPERIOR + desplazamiento,
+                ),
+                1,
+            )
+
+
+def crear_fondo_estadio(
+    estadio: Estadio,
+    *,
+    red: bool = False,
+) -> pygame.Surface:
+    """Pre-renderiza el recinto, el césped y las líneas de la cancha."""
+    fondo = pygame.Surface((ANCHO, ALTO))
+
+    if estadio.gradas:
+        fondo.fill(color_tribuna(estadio.momento))
+        dibujar_aficionados(fondo, estadio.momento)
+    else:
+        fondo.fill(color_entorno(estadio))
+
+    cancha = pygame.Surface(CAMPO_RECT.size)
+    dibujar_cesped(cancha, estadio)
+    fondo.blit(cancha, CAMPO_RECT.topleft)
+    dibujar_lineas_campo(fondo, red=red)
+
+    return fondo
 
 
 def dibujar_aficionados(

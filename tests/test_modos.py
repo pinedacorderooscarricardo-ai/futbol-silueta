@@ -19,7 +19,6 @@ from futbol_silueta.configuracion import (
     ANCHO,
     ENERGIA_MAXIMA,
     Equipo,
-    Estado,
 )
 from futbol_silueta.juego import Juego
 from futbol_silueta.modos import (
@@ -65,6 +64,14 @@ class LigaTests(unittest.TestCase):
         self.assertTrue(liga.terminado)
         self.assertIn("CAMPEÓN DE LIGA", liga.texto_final_torneo())
 
+    def test_la_etiqueta_no_supera_las_jornadas(self) -> None:
+        liga = Liga()
+
+        for _ in range(11):
+            liga.registrar(1, 0)
+
+        self.assertIn("J11/11", liga.etiqueta())
+
 
 class CopaTests(unittest.TestCase):
     def test_ganar_tres_rondas_da_el_titulo(self) -> None:
@@ -86,6 +93,28 @@ class CopaTests(unittest.TestCase):
 
         self.assertTrue(copa.terminado)
         self.assertIn("ELIMINADO", copa.texto_final_torneo())
+
+    def test_la_etiqueta_sigue_valida_tras_ganar_la_final(self) -> None:
+        copa = Copa()
+
+        while not copa.terminado:
+            copa.registrar(1, 0)
+
+        # La ronda quedó tras la última: el marcador puede seguir
+        # pidiendo la etiqueta en la pantalla final sin romperse.
+        self.assertIn("Final", copa.etiqueta())
+
+    def test_ganar_un_cruce_como_visitante_avanza(self) -> None:
+        # Un torneo restaurado puede traer al jugador como visitante del
+        # cruce: los goles del juego (siempre su perspectiva) deben
+        # traducirse al cruce antes de decidir el ganador.
+        copa = Copa()
+        copa._emparejamientos = [(5, 0), (2, 3), (4, 6), (7, 1)]
+
+        copa.registrar(3, 0)
+
+        self.assertFalse(copa.eliminado)
+        self.assertIn(0, copa._emparejamientos[0])
 
 
 class CampeonesTests(unittest.TestCase):
@@ -114,6 +143,61 @@ class CampeonesTests(unittest.TestCase):
 
         self.assertTrue(torneo.terminado)
         self.assertIn("ELIMINADO", torneo.texto_final_torneo())
+
+    def test_ganar_la_semifinal_como_visitante_del_cruce(self) -> None:
+        # Segundo del grupo: en el cruce le toca ser visitante. Ganar
+        # 3-0 tiene que llevarlo a la final, no eliminarlo: los goles
+        # del juego son siempre del punto de vista del jugador.
+        torneo = Campeones()
+        torneo._fase = Campeones.FASE_SEMIS
+        torneo._semifinales = ((11, 3), (9, 0))
+
+        torneo.registrar(3, 0)
+
+        self.assertFalse(torneo.eliminado)
+        self.assertIn(0, torneo._final)
+        self.assertIn("Semifinal superada", torneo.texto_tras_partido())
+
+    def test_perder_la_semifinal_como_visitante_elimina(self) -> None:
+        torneo = Campeones()
+        torneo._fase = Campeones.FASE_SEMIS
+        torneo._semifinales = ((11, 3), (9, 0))
+
+        torneo.registrar(0, 2)
+
+        self.assertTrue(torneo.eliminado)
+        self.assertTrue(torneo.terminado)
+        self.assertIn("SEMIFINAL", torneo.texto_final_torneo())
+        self.assertNotIn("fase de grupos", torneo.texto_final_torneo())
+
+    def test_ganar_la_final_como_visitante_da_el_titulo(self) -> None:
+        torneo = Campeones()
+        torneo._fase = Campeones.FASE_FINAL
+        torneo._final = (9, 0)
+
+        torneo.registrar(2, 1)
+
+        self.assertTrue(torneo.campeon)
+        self.assertTrue(torneo.terminado)
+        self.assertIn("¡CAMPEÓN", torneo.texto_final_torneo())
+
+    def test_rival_de_la_final_es_el_otro_finalista(self) -> None:
+        torneo = Campeones()
+        torneo._fase = Campeones.FASE_FINAL
+
+        torneo._final = (9, 0)
+        self.assertEqual(torneo.rival_del_partido(), 9)
+
+        torneo._final = (0, 9)
+        self.assertEqual(torneo.rival_del_partido(), 9)
+
+    def test_clasificado_anuncia_la_semifinal(self) -> None:
+        torneo = Campeones()
+        torneo._fase = Campeones.FASE_SEMIS
+        torneo._semifinales = ((0, 3), (9, 11))
+        torneo._final = None
+
+        self.assertIn("semifinal", torneo.texto_tras_partido().lower())
 
 
 class SupervivenciaTests(unittest.TestCase):
@@ -149,6 +233,24 @@ class JuegoModoTests(unittest.TestCase):
         self.juego.goles_visitante = gv
         self.juego.mitad = 2
         self.juego._terminar_mitad()
+
+    def test_reiniciar_un_torneo_terminado_empieza_otro(self) -> None:
+        self.juego.iniciar_modo(ModoJuego.LIGA)
+
+        for _ in range(11):
+            self.juego.torneo.registrar(1, 0)
+
+        self.assertTrue(self.juego.torneo.terminado)
+
+        # ESC -> "Reiniciar partido" en la pantalla final no debe pedir
+        # el rival de una jornada que ya no existe.
+        self.juego.nueva_partida()
+
+        self.assertFalse(self.juego.torneo.terminado)
+        self.assertEqual(
+            self.juego.nivel,
+            self.juego.torneo.rival_del_partido(),
+        )
 
     def test_la_campana_sigue_igual(self) -> None:
         self.juego.iniciar_modo(ModoJuego.CAMPANA)

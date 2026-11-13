@@ -163,15 +163,15 @@ class Escudo:
 COLORES_ESCUDO_POR_NIVEL: dict[int, tuple[Color, Color]] = {
     1: ((34, 139, 34), (255, 255, 255)),     # Club Aurora
     2: ((40, 80, 200), (255, 255, 255)),     # Pasión Fútbol
-    3: ((255, 205, 50), (20, 20, 20)),       # U. D. Prisma
-    4: ((150, 60, 200), (255, 255, 255)),    # Atlético Corona
-    5: ((215, 65, 45), (255, 255, 255)),     # Real Laurel
-    6: ((255, 125, 30), (20, 20, 20)),       # Deportivo Trueno
-    7: ((20, 105, 105), (255, 255, 255)),    # Club Titán
-    8: ((212, 175, 55), (20, 20, 20)),       # Imperial Oro
-    9: ((120, 30, 60), (255, 255, 255)),     # Furia FC
-    10: ((30, 30, 30), (255, 215, 0)),       # Real Leyenda
-    11: ((70, 70, 85), (255, 255, 255)),     # Campeón Eterno
+    3: ((255, 205, 50), (20, 20, 20)),       # Unión Deportiva Prisma
+    4: ((150, 60, 200), (255, 255, 255)),    # Italian Football Academy
+    5: ((215, 65, 45), (255, 255, 255)),     # F.C. Imperiale
+    6: ((255, 125, 30), (20, 20, 20)),       # Forza 10 Italia
+    7: ((20, 105, 105), (255, 255, 255)),    # Milan City F.C.
+    8: ((212, 175, 55), (20, 20, 20)),       # Copa Latina Unida
+    9: ((120, 30, 60), (255, 255, 255)),     # Crest
+    10: ((30, 30, 30), (255, 215, 0)),       # Deutscher Fussball
+    11: ((70, 70, 85), (255, 255, 255)),     # Fussball Einheit
 }
 
 # Personalizaciones de escudo que el jugador puede elegir en el menú.

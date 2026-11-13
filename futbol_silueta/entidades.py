@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
-from typing import NamedTuple
+from typing import ClassVar, NamedTuple
 
 import pygame
 
@@ -51,9 +51,8 @@ class Jugador:
     RADIO = RADIO_JUGADOR
     MARGEN_SPRITE = 8  # Borde extra del sprite, para el aro de posesión.
 
-    _sprites: dict[
-        tuple[Equipo, bool, int, Uniforme, bool],
-        pygame.Surface,
+    _sprites: ClassVar[
+        dict[tuple[Equipo, bool, int, Uniforme, bool], pygame.Surface]
     ] = {}
 
     def __init__(
@@ -329,18 +328,18 @@ def crear_jugadores(
             equipo,
             UNIFORMES_POR_DEFECTO[equipo],
         )
-        for ficha in _fichas_normalizadas(
-            equipo,
-            (plantillas or {}).get(equipo),
-        ):
-            jugadores.append(
-                crear_jugador_de_ficha(
-                    equipo,
-                    ficha,
-                    uniforme,
-                    mostrar_numeros,
-                )
+        jugadores.extend(
+            crear_jugador_de_ficha(
+                equipo,
+                ficha,
+                uniforme,
+                mostrar_numeros,
             )
+            for ficha in _fichas_normalizadas(
+                equipo,
+                (plantillas or {}).get(equipo),
+            )
+        )
 
     return jugadores
 

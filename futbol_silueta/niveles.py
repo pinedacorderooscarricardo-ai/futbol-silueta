@@ -54,15 +54,15 @@ class Nivel(NamedTuple):
 RIVALES: tuple[str, ...] = (
     "Club Aurora",
     "Pasión Fútbol",
-    "U. D. Prisma",
-    "Atlético Corona",
-    "Real Laurel",
-    "Deportivo Trueno",
-    "Club Titán",
-    "Imperial Oro",
-    "Furia FC",
-    "Real Leyenda",
-    "Campeón Eterno",
+    "Unión Deportiva Prisma",
+    "Italian Football Academy",
+    "F.C. Imperiale",
+    "Forza 10 Italia",
+    "Milan City F.C.",
+    "Copa Latina Unida",
+    "Crest",
+    "Deutscher Fussball",
+    "Fussball Einheit",
 )
 
 NIVEL_MAXIMO = len(RIVALES)

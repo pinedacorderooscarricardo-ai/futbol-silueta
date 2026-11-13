@@ -28,6 +28,7 @@ from futbol_silueta.configuracion import (
 )
 from futbol_silueta.guardado import Guardado
 from futbol_silueta.menus import Accion, Pantalla
+from futbol_silueta.modos import ModoJuego
 
 
 class AplicacionTests(unittest.TestCase):
@@ -67,7 +68,7 @@ class AplicacionTests(unittest.TestCase):
             )
         )
 
-    def test_click_en_jugar_inicia_una_partida(self) -> None:
+    def test_click_en_jugar_presenta_estadio_e_inicia_partida(self) -> None:
         self._click(self.app.menus.botones[Pantalla.PRINCIPAL][0].rect)
         self.app.procesar_eventos()
 
@@ -76,12 +77,25 @@ class AplicacionTests(unittest.TestCase):
         self._click(self.app.menus.botones[Pantalla.MODOS][0].rect)
         self.app.procesar_eventos()
 
-        self.assertIs(self.app.menus.pantalla, Pantalla.PARTIDO)
+        # El partido ya está preparado detrás de la presentación.
+        self.assertIs(self.app.menus.pantalla, Pantalla.PRESENTACION)
         self.assertIs(self.app.juego.estado, Estado.JUGANDO)
         self.assertEqual(
             self.app.juego.tiempo_restante,
             float(DURACION_MITAD),
         )
+        self.assertEqual(
+            self.app.menus.nivel_presentado,
+            self.app.juego.nivel,
+        )
+
+        self._click(
+            self.app.menus.botones[Pantalla.PRESENTACION][0].rect
+        )
+        self.app.procesar_eventos()
+
+        self.assertIs(self.app.menus.pantalla, Pantalla.PARTIDO)
+        self.assertIs(self.app.juego.estado, Estado.JUGANDO)
 
     def test_escape_abre_la_pausa_y_continuar_reanuda(self) -> None:
         self.app.menus.pantalla = Pantalla.PARTIDO
@@ -219,6 +233,60 @@ class AplicacionTests(unittest.TestCase):
             self.app.juego.plantillas[Equipo.LOCAL][9].dorsal,
             12,
         )
+
+    def test_volver_a_campana_retoma_el_nivel_guardado(self) -> None:
+        # Los otros modos dejan juego.nivel en el rival de su ronda: al
+        # volver a la campaña debe retomarse el progreso guardado.
+        self.app.juego.adoptar_nivel(8)
+        self.guardado.guardar_desde(self.app.menus, 8)
+
+        self.app.juego.iniciar_modo(ModoJuego.LIGA)
+        self.assertNotEqual(self.app.juego.nivel, 8)
+
+        self.app.menus.modo_seleccionado = ModoJuego.CAMPANA
+        self.app.menus._accion_pendiente = Accion.PRESENTAR
+        self.app._ejecutar_accion_pendiente()
+
+        self.assertIs(self.app.juego.modo, ModoJuego.CAMPANA)
+        self.assertEqual(self.app.juego.nivel, 8)
+
+    def test_reentrar_a_campana_conserva_el_nivel_en_curso(self) -> None:
+        # Si la campaña ya estaba activa, no se rebobina al último
+        # guardado: el nivel en curso puede ir por delante.
+        self.guardado.guardar_desde(self.app.menus, 8)
+        self.app.juego.adoptar_nivel(8)
+        self.app.juego.iniciar_modo(ModoJuego.CAMPANA)
+        self.app.juego._siguiente_nivel()
+        self.assertEqual(self.app.juego.nivel, 9)
+
+        self.app.menus.modo_seleccionado = ModoJuego.CAMPANA
+        self.app.menus._accion_pendiente = Accion.PRESENTAR
+        self.app._ejecutar_accion_pendiente()
+
+        self.assertEqual(self.app.juego.nivel, 9)
+
+    def test_jugar_un_torneo_no_pisa_el_nivel_de_campana(self) -> None:
+        # En los torneos juego.nivel es el rival de la ronda: guardar
+        # así la campaña la rebobinaría. El nivel guardado debe quedar.
+        self.app.juego.adoptar_nivel(8)
+        self.guardado.guardar_desde(self.app.menus, self.app.juego.nivel)
+        self.assertEqual(self.guardado.nivel_guardado(), 8)
+
+        self.app.juego.iniciar_modo(ModoJuego.LIGA)
+        self.app.menus.pantalla = Pantalla.PARTIDO
+
+        juego = self.app.juego
+        juego.goles_local = 2
+        juego.goles_visitante = 0
+        juego.mitad = 2
+        juego._terminar_mitad()
+
+        # actualizar() registra el resultado y guarda; el nivel de la
+        # campaña no debe cambiar.
+        self.app.actualizar(0.0)
+
+        self.assertTrue(juego.resultado_registrado)
+        self.assertEqual(self.guardado.nivel_guardado(), 8)
 
 
 if __name__ == "__main__":

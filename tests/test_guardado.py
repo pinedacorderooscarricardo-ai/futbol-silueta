@@ -26,6 +26,7 @@ from futbol_silueta.juego import Juego
 from futbol_silueta.menus import Accion, Boton, Menus, Pantalla
 from futbol_silueta.modos import ModoJuego, Copa, Campeones, Liga, Supervivencia
 from futbol_silueta.plantilla import PRESETS_VELOCIDAD
+from futbol_silueta.tienda_estadios import ESTADIO_GRATIS
 from futbol_silueta.uniformes import UNIFORME_PRESETS, Uniforme
 
 
@@ -126,6 +127,56 @@ class GuardadoTests(unittest.TestCase):
             "Césped: OSCURO",
         )
 
+    def test_las_monedas_quedan_guardadas(self) -> None:
+        menus = Menus()
+        menus.monedas = 375
+        self.abrir().guardar_desde(menus)
+
+        otros = Menus()
+        self.abrir().cargar_en(otros)
+
+        self.assertEqual(otros.monedas, 375)
+
+    def test_las_monedas_negativas_se_guardan_como_cero(self) -> None:
+        menus = Menus()
+        menus.monedas = -50
+        guardado = self.abrir()
+        guardado.guardar_desde(menus)
+        fila = guardado.conexion.execute(
+            "SELECT monedas FROM ajustes WHERE id = 1"
+        ).fetchone()
+
+        self.assertEqual(fila[0], 0)
+
+    def test_los_estadios_comprados_quedan_guardados(self) -> None:
+        menus = Menus()
+        menus.estadios_comprados = {ESTADIO_GRATIS, "nocturno", "cristal"}
+        self.abrir().guardar_desde(menus)
+
+        otros = Menus()
+        self.abrir().cargar_en(otros)
+
+        self.assertEqual(
+            otros.estadios_comprados,
+            {ESTADIO_GRATIS, "nocturno", "cristal"},
+        )
+
+    def test_los_estadios_comprados_invalidos_se_descartan(self) -> None:
+        menus = Menus()
+        menus.estadios_comprados = {ESTADIO_GRATIS, "nocturno", "inventado"}
+        self.abrir().guardar_desde(menus)
+
+        # Una fila editada a mano tampoco debe cargar un id desconocido.
+        guardado = self.abrir()
+        guardado.conexion.execute(
+            "INSERT INTO estadios_comprados (id) VALUES ('fantasma')"
+        )
+        guardado.conexion.commit()
+        otros = Menus()
+        self.abrir().cargar_en(otros)
+
+        self.assertEqual(otros.estadios_comprados, {ESTADIO_GRATIS, "nocturno"})
+
     def test_la_campana_y_el_palmares_quedan_guardados(self) -> None:
         menus = Menus()
         menus._ejecutar(Accion.CLIMA)  # Despejado -> lluvia
@@ -193,6 +244,10 @@ class GuardadoTests(unittest.TestCase):
         # Los ajustes viejos se cargan y el estadio toma el defecto.
         self.assertEqual(menus.escudo_color, (10, 20, 30))
         self.assertIs(menus.estadio_seleccionado.cesped, Cesped.CLARO)
+
+        # Las columnas y tablas nuevas se crean con sus valores por defecto.
+        self.assertEqual(menus.monedas, 0)
+        self.assertEqual(menus.estadios_comprados, {ESTADIO_GRATIS})
 
         # Y el guardado sigue funcionando con la base migrada.
         menus._ejecutar(Accion.CESPED)
@@ -467,6 +522,25 @@ class TorneoGuardadoTests(unittest.TestCase):
         self.guardado.conexion.commit()
 
         self.assertIsNone(self.guardado.cargar_torneo(ModoJuego.LIGA))
+
+    def test_un_campeon_con_final_corrupta_se_ignora(self) -> None:
+        # Una final guardada como lista vacía no puede tumbar la carga:
+        # el torneo corrupto se descarta.
+        self.guardado.conexion.execute(
+            "INSERT INTO torneos (modo, datos) VALUES (?, ?)",
+            (
+                ModoJuego.CAMPEONES.value,
+                (
+                    '{"fase": 2, "jornada": 3, "tabla_a": {}, '
+                    '"tabla_b": {}, "semifinales": null, "final": [], '
+                    '"final_registrada": false, "campeon": false, '
+                    '"eliminado": false}'
+                ),
+            ),
+        )
+        self.guardado.conexion.commit()
+
+        self.assertIsNone(self.guardado.cargar_torneo(ModoJuego.CAMPEONES))
 
     def test_indices_fuera_de_rango_se_acotan(self) -> None:
         # Una fila editada a mano con una jornada imposible no debe

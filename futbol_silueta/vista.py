@@ -12,9 +12,6 @@ from .configuracion import (
     ALTO,
     AMARILLO,
     ANCHO,
-    ANCHO_POSTE,
-    AREA_PENALTI_ALTO,
-    AREA_PENALTI_ANCHO,
     BLANCO,
     CAMPO_RECT,
     CIAN,
@@ -27,9 +24,6 @@ from .configuracion import (
     MENSAJE_GOL,
     MENSAJE_REPETICION,
     NEGRO,
-    PORTERIA_ALTO,
-    PORTERIA_SUPERIOR,
-    RADIO_CIRCULO_CENTRAL,
     ROJO_ENERGIA,
     SUAVIZADO_CAMARA,
     SUAVIZADO_ZOOM,
@@ -56,10 +50,7 @@ from .estadios import (
     ESTADIO_POR_DEFECTO,
     Clima,
     Estadio,
-    color_entorno,
-    color_tribuna,
-    dibujar_aficionados,
-    dibujar_cesped,
+    crear_fondo_estadio,
 )
 from .modos import ModoJuego
 from .niveles import nivel_por_numero
@@ -173,6 +164,9 @@ class Vista:
         )
         # Comentarios del narrador, cacheados por texto.
         self._comentarios_cache: dict[str, pygame.Surface] = {}
+        # Chips de aviso (el del viento), cacheados por su texto: la
+        # fuerza solo cambia de vez en cuando, no en cada fotograma.
+        self._chips: dict[str, pygame.Surface] = {}
 
         # Cámara dinámica: el mundo se pinta en un lienzo propio para
         # poder acercarlo y seguir al balón antes de presentarlo.
@@ -272,11 +266,7 @@ class Vista:
             self.pantalla.blit(mundo, (0, 0))
             return
 
-        camara = pygame.Rect(0, 0, round(ancho), round(alto))
-        camara.center = (
-            round(self._centro_camara.x),
-            round(self._centro_camara.y),
-        )
+        camara = self._camara_rect()
         pygame.transform.scale(
             mundo.subsurface(camara),
             (ANCHO, ALTO),
@@ -288,13 +278,17 @@ class Vista:
         camara = pygame.Rect(
             0,
             0,
-            round(ANCHO * self._zoom),
-            round(ALTO * self._zoom),
+            min(ANCHO, round(ANCHO * self._zoom)),
+            min(ALTO, round(ALTO * self._zoom)),
         )
         camara.center = (
             round(self._centro_camara.x),
             round(self._centro_camara.y),
         )
+        # Con el zoom rozando el 1.0, el redondeo del centro puede dejar
+        # el rectángulo un píxel fuera del lienzo (y subsurface rechina):
+        # se recorta al área disponible.
+        camara.clamp_ip(pygame.Rect(0, 0, ANCHO, ALTO))
         return camara
 
     def _crear_confeti(self) -> list[tuple[int, int, float, Color]]:
@@ -349,14 +343,20 @@ class Vista:
         if fuerza < 4.0:
             return
 
-        chip = self._crear_superficie_con_fondo(
-            f"VIENTO {fuerza:.0f}",
-            self.fuente_hud,
-            BLANCO,
-            padding_x=14,
-            padding_y=6,
-            radio=8,
-        )
+        texto_chip = f"VIENTO {fuerza:.0f}"
+        chip = self._chips.get(texto_chip)
+
+        if chip is None:
+            chip = self._crear_superficie_con_fondo(
+                texto_chip,
+                self.fuente_hud,
+                BLANCO,
+                padding_x=14,
+                padding_y=6,
+                radio=8,
+            )
+            self._chips[texto_chip] = chip
+
         rect = chip.get_rect(topright=(ANCHO - 14, 12))
         self.pantalla.blit(chip, rect)
 
@@ -576,67 +576,7 @@ class Vista:
 
     def _crear_fondo(self, estadio: Estadio) -> pygame.Surface:
         """Pre-renderiza el estadio: entorno, cancha y líneas."""
-        fondo = pygame.Surface((ANCHO, ALTO)).convert()
-
-        if estadio.gradas:
-            # Graderío con público; la cancha se estampa encima.
-            fondo.fill(color_tribuna(estadio.momento))
-            dibujar_aficionados(fondo, estadio.momento)
-        else:
-            fondo.fill(color_entorno(estadio))
-
-        cancha = pygame.Surface(CAMPO_RECT.size)
-        dibujar_cesped(cancha, estadio)
-        fondo.blit(cancha, CAMPO_RECT.topleft)
-
-        pygame.draw.rect(fondo, BLANCO, CAMPO_RECT, 3)
-
-        pygame.draw.line(
-            fondo,
-            BLANCO,
-            (CAMPO_RECT.centerx, CAMPO_RECT.top),
-            (CAMPO_RECT.centerx, CAMPO_RECT.bottom),
-            2,
-        )
-
-        pygame.draw.circle(
-            fondo,
-            BLANCO,
-            (CAMPO_RECT.centerx, CAMPO_RECT.centery),
-            RADIO_CIRCULO_CENTRAL,
-            2,
-        )
-
-        # Áreas de penalti, en las dos bandas.
-        for x in (
-            CAMPO_RECT.left,
-            CAMPO_RECT.right - AREA_PENALTI_ANCHO,
-        ):
-            pygame.draw.rect(
-                fondo,
-                BLANCO,
-                (
-                    x,
-                    CAMPO_RECT.centery - AREA_PENALTI_ALTO // 2,
-                    AREA_PENALTI_ANCHO,
-                    AREA_PENALTI_ALTO,
-                ),
-                2,
-            )
-
-        # Porterías, a cada lado del campo.
-        for x in (
-            CAMPO_RECT.left - ANCHO_POSTE,
-            CAMPO_RECT.right,
-        ):
-            pygame.draw.rect(
-                fondo,
-                BLANCO,
-                (x, PORTERIA_SUPERIOR, ANCHO_POSTE, PORTERIA_ALTO),
-                3,
-            )
-
-        return fondo
+        return crear_fondo_estadio(estadio).convert()
 
     def _crear_panel(
         self,
@@ -656,6 +596,10 @@ class Vista:
         return panel
 
     def _dibujar_marcador(self, juego: Juego) -> None:
+        # La ronda (competición y jornada) forma parte de la clave: sin
+        # ella, el marcador mostraría la ronda vieja tras cambiarla sin
+        # cambiar el resultado.
+        ronda = self._ronda_de_marcador(juego)
         clave = (
             juego.nivel,
             juego.goles_local,
@@ -665,12 +609,13 @@ class Vista:
             juego.escudo.forma,
             juego.uniformes[Equipo.LOCAL].camiseta,
             juego.uniformes[Equipo.VISITANTE].camiseta,
+            ronda,
         )
 
         if self._marcador_cache is None or self._marcador_cache[0] != clave:
             self._marcador_cache = (
                 clave,
-                self._crear_superficie_marcador(juego),
+                self._crear_superficie_marcador(juego, ronda),
             )
 
         superficie = self._marcador_cache[1]
@@ -679,7 +624,20 @@ class Vista:
             superficie.get_rect(center=self.POSICION_MARCADOR),
         )
 
-    def _crear_superficie_marcador(self, juego: Juego) -> pygame.Surface:
+    @staticmethod
+    def _ronda_de_marcador(juego: Juego) -> str:
+        """Texto de competición y ronda (o de nivel) para el marcador."""
+        return (
+            juego.torneo.etiqueta()
+            if juego.torneo is not None
+            else f"NIVEL {juego.nivel}"
+        )
+
+    def _crear_superficie_marcador(
+        self,
+        juego: Juego,
+        ronda: str | None = None,
+    ) -> pygame.Surface:
         """Bug televisivo: escudos, resultado, colores y aviso en vivo.
 
         Inspirado en las transmisiones deportivas: franja con el color
@@ -692,11 +650,10 @@ class Vista:
             f"{juego.goles_visitante} VISITANTE"
         )
         texto_render = self.fuente_marcador.render(texto, True, BLANCO)
-        ronda = (
-            juego.torneo.etiqueta()
-            if juego.torneo is not None
-            else f"NIVEL {juego.nivel}"
-        )
+
+        if ronda is None:
+            ronda = self._ronda_de_marcador(juego)
+
         subtitulo = self.fuente_hud.render(
             f"{ronda} · {nivel.rival}",
             True,

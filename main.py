@@ -16,6 +16,7 @@ En los menús se puede usar el ratón o las flechas y ENTER.
 
 from __future__ import annotations
 
+import contextlib
 import sys
 
 import pygame
@@ -30,10 +31,8 @@ from futbol_silueta.configuracion import (
 
 def main() -> int:
     """Inicializa pygame, crea la ventana y arranca la aplicación."""
-    try:
+    with contextlib.suppress(pygame.error):
         pygame.mixer.pre_init(FRECUENCIA_AUDIO, -16, 1, 512)
-    except pygame.error:
-        pass
 
     pygame.init()
 

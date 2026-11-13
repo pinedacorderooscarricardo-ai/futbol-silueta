@@ -28,6 +28,10 @@ from futbol_silueta.escudos import ESCUDO_PRESETS, FORMAS_ESCUDO
 from futbol_silueta.estadios import Cesped, Clima, Diseno, Momento
 from futbol_silueta.menus import Accion, Menus, Pantalla
 from futbol_silueta.plantilla import suplentes_por_defecto
+from futbol_silueta.tienda_estadios import (
+    ESTADIO_GRATIS,
+    articulo_por_id,
+)
 from futbol_silueta.uniformes import UNIFORME_PRESETS
 
 
@@ -72,7 +76,7 @@ class MenusTests(unittest.TestCase):
                 self.assertLessEqual(boton.rect.right, ANCHO)
                 self.assertLessEqual(boton.rect.bottom, ALTO)
 
-    def test_click_en_jugar_abre_el_partido(self) -> None:
+    def test_click_en_jugar_presenta_el_estadio_y_abre_el_partido(self) -> None:
         rect = self.menus.botones[Pantalla.PRINCIPAL][0].rect
         evento = self._evento_raton(
             pygame.MOUSEBUTTONDOWN,
@@ -81,8 +85,8 @@ class MenusTests(unittest.TestCase):
 
         self.menus.procesar_evento(evento)
 
-        # JUGAR abre ahora el selector de modos; desde él, "Campaña"
-        # arranca la partida como antes.
+        # JUGAR abre el selector de modos; desde él, "Campaña" presenta
+        # el estadio rival y espera a que el jugador pulse "Comenzar".
         self.assertIs(self.menus.pantalla, Pantalla.MODOS)
         self.assertIsNone(self.menus.consumir_accion())
 
@@ -94,8 +98,18 @@ class MenusTests(unittest.TestCase):
             )
         )
 
+        self.assertIs(self.menus.pantalla, Pantalla.PRESENTACION)
+        self.assertIs(self.menus.consumir_accion(), Accion.PRESENTAR)
+
+        rect_presentacion = self.menus.botones[Pantalla.PRESENTACION][0].rect
+        self.menus.procesar_evento(
+            self._evento_raton(
+                pygame.MOUSEBUTTONDOWN,
+                rect_presentacion.center,
+            )
+        )
+
         self.assertIs(self.menus.pantalla, Pantalla.PARTIDO)
-        self.assertIs(self.menus.consumir_accion(), Accion.JUGAR)
         self.assertIsNone(self.menus.consumir_accion())
 
     def test_click_en_todos_los_botones_principales(self) -> None:
@@ -328,6 +342,36 @@ class MenusTests(unittest.TestCase):
         self.menus.procesar_tecla(pygame.K_ESCAPE)
         self.assertIs(self.menus.pantalla, Pantalla.OPCIONES)
 
+    def test_la_galeria_recorre_estadios_y_vistas(self) -> None:
+        self.menus._ejecutar(Accion.ESTADIO)
+        self.menus._ejecutar(Accion.GALERIA_ESTADIOS)
+
+        self.assertIs(self.menus.pantalla, Pantalla.GALERIA)
+        self.assertEqual(self.menus.estadio_galeria.nivel, 1)
+        self.assertEqual(self.menus.vista_galeria.etiqueta, "Exterior")
+
+        self.menus._ejecutar(Accion.SIGUIENTE_ESTADIO)
+        self.assertEqual(self.menus.estadio_galeria.nivel, 2)
+        self.assertEqual(self.menus.indice_vista_galeria, 0)
+
+        # "Vista >" es el cuarto botón de la galería.
+        self.menus._ejecutar(
+            Accion.VISTA_ESTADIO,
+            self.menus.botones[Pantalla.GALERIA][3],
+        )
+        self.assertEqual(self.menus.vista_galeria.etiqueta, "Acceso")
+
+        # El dibujo carga la foto y la deja en la caché acotada.
+        self.menus.dibujar(self.pantalla)
+        self.assertTrue(self.menus._cache_estadios)
+        self.assertLessEqual(
+            len(self.menus._cache_estadios),
+            self.menus._MAXIMO_CACHE_ESTADIOS,
+        )
+
+        self.menus.procesar_tecla(pygame.K_ESCAPE)
+        self.assertIs(self.menus.pantalla, Pantalla.ESTADIO)
+
     def test_el_palmares_se_abre_y_vuelve(self) -> None:
         self.menus.procesar_tecla(pygame.K_DOWN)  # Opciones
         self.menus.procesar_tecla(pygame.K_RETURN)
@@ -462,10 +506,14 @@ class MenusTests(unittest.TestCase):
             Pantalla.EDITOR,
             Pantalla.TACTICA,
             Pantalla.ESTADIO,
+            Pantalla.GALERIA,
+            Pantalla.PRESENTACION,
             Pantalla.PALMARES,
             Pantalla.SUSTITUCIONES,
             Pantalla.AYUDA,
             Pantalla.PAUSA,
+            Pantalla.ENTRENAMIENTOS,
+            Pantalla.TIENDA_ESTADIOS,
         ):
             self.menus.pantalla = pantalla
             self.menus.indice = 0
@@ -512,6 +560,86 @@ class MenusTests(unittest.TestCase):
         self.assertEqual(dorsal_saliente, 10)
         self.assertEqual(ficha.dorsal, suplentes[0].dorsal)
         self.assertIsNone(menus.consumir_sustitucion())
+
+    def test_el_modo_entrenamiento_abre_su_submenu(self) -> None:
+        self.menus._ejecutar(Accion.ENTRENAMIENTO)
+
+        self.assertIs(self.menus.pantalla, Pantalla.ENTRENAMIENTOS)
+        self.assertIsNone(self.menus.consumir_accion())
+
+    def test_los_ejercicios_abren_la_sesion_activa(self) -> None:
+        for accion in (
+            Accion.TIROS,
+            Accion.PENALES,
+            Accion.DOS_CONTRA_UNO,
+        ):
+            menus = Menus()
+            menus._ejecutar(Accion.ENTRENAMIENTO)
+            menus._ejecutar(accion)
+
+            self.assertIs(
+                menus.pantalla,
+                Pantalla.ENTRENAMIENTO_ACTIVO,
+                accion,
+            )
+            self.assertIs(menus.consumir_accion(), accion)
+
+    def test_campo_libre_pide_el_modo_de_siempre(self) -> None:
+        self.menus._ejecutar(Accion.CAMPO_LIBRE)
+
+        self.assertIs(self.menus.pantalla, Pantalla.PARTIDO)
+        self.assertIs(self.menus.consumir_accion(), Accion.JUGAR)
+        self.assertEqual(self.menus.modo_seleccionado.value, "entrenamiento")
+
+    def test_la_tienda_compra_y_equipa_un_estadio(self) -> None:
+        menus = self.menus
+        menus.monedas = 300
+        menus.abrir_tienda_estadios()
+        self.assertIs(menus.pantalla, Pantalla.TIENDA_ESTADIOS)
+        self.assertIn(ESTADIO_GRATIS, menus.estadios_comprados)
+
+        boton = next(
+            boton
+            for boton in menus.botones_actuales
+            if boton.valor == "amanecer"
+        )
+        menus._ejecutar(boton.accion, boton)
+
+        articulo = articulo_por_id("amanecer")
+        self.assertIsNotNone(articulo)
+        assert articulo is not None
+        self.assertEqual(menus.monedas, 300 - articulo.precio)
+        self.assertIn("amanecer", menus.estadios_comprados)
+        self.assertEqual(menus.estadio_seleccionado, articulo.estadio)
+        self.assertIs(menus.consumir_accion(), Accion.COMPRAR_ESTADIO)
+        self.assertIn("Compraste", menus.mensaje_tienda)
+
+        # El estadio comprado se puede volver a equipar.
+        boton = next(
+            boton
+            for boton in menus.botones_actuales
+            if boton.valor == "amanecer"
+        )
+        self.assertIs(boton.accion, Accion.EQUIPAR_ESTADIO)
+        menus._ejecutar(boton.accion, boton)
+        self.assertIs(menus.consumir_accion(), Accion.EQUIPAR_ESTADIO)
+
+    def test_la_tienda_no_vende_sin_monedas(self) -> None:
+        menus = self.menus
+        menus.monedas = 10
+        menus.abrir_tienda_estadios()
+
+        boton = next(
+            boton
+            for boton in menus.botones_actuales
+            if boton.valor == "nocturno"
+        )
+        menus._ejecutar(boton.accion, boton)
+
+        self.assertEqual(menus.monedas, 10)
+        self.assertNotIn("nocturno", menus.estadios_comprados)
+        self.assertTrue(menus.mensaje_tienda_error)
+        self.assertIn("faltan", menus.mensaje_tienda)
 
     def test_sustituciones_respetan_el_limite(self) -> None:
         menus = self.menus

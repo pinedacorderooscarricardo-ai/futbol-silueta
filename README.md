@@ -4,11 +4,13 @@ Juego 2D de fútbol para dos equipos de 11 jugadores, hecho con **pygame**.
 Incluye IA para el equipo visitante, conducción de balón, pases, robos,
 sprint con energía, atajadas, marcaje, un partido de dos tiempos de
 3 minutos, menús ilustrados con botones clicables, una campaña de
-niveles, la personalización del escudo del jugador, uniformes
-personalizados, un editor de jugadores con nombres, dorsales,
-atributos y posiciones, tácticas con cuatro formaciones seleccionables
-(4-4-2, 4-3-3, 3-5-2 y 5-3-2) y un banquillo de suplentes con
-sustituciones en vivo desde la pausa.
+niveles con los estadios de sus 11 rivales, la personalización del
+escudo del jugador, uniformes personalizados, un editor de jugadores
+con nombres, dorsales, atributos y posiciones, tácticas con cuatro
+formaciones seleccionables (4-4-2, 4-3-3, 3-5-2 y 5-3-2) y un banquillo
+de suplentes con sustituciones en vivo desde la pausa. Los
+entrenamientos de tiros, penales y dos contra uno pagan monedas que se
+canjean por estadios en la tienda.
 
 ## Campaña de niveles
 
@@ -17,12 +19,19 @@ cada uno aumenta la dificultad de la IA de forma progresiva (velocidad,
 presión, tiros y puntería). Al terminar el último nivel la campaña vuelve
 al nivel 1.
 
-| Nivel | Rival | Escudo |
-| --- | --- | --- |
-| 1 | Club Aurora | `imagenes/escudos/escudo_01.jpeg` |
-| 2 | Pasión Fútbol | `imagenes/escudos/escudo_02.jpeg` |
-| ... | ... | ... |
-| 11 | Campeón Eterno | `imagenes/escudos/escudo_11.jpeg` |
+| Nivel | Rival | Estadio | Escudo |
+| --- | --- | --- | --- |
+| 1 | Club Aurora | Royal Star Arena | `imagenes/escudos/escudo_01.jpeg` |
+| 2 | Pasión Fútbol | El Coliseo de la Pasión Latina | `imagenes/escudos/escudo_02.jpeg` |
+| 3 | Unión Deportiva Prisma | Estadio Prismático | `imagenes/escudos/escudo_03.jpeg` |
+| 4 | Italian Football Academy | Stadion Adler | `imagenes/escudos/escudo_04.jpeg` |
+| 5 | F.C. Imperiale | Estadio Corona de Oro | `imagenes/escudos/escudo_05.jpeg` |
+| 6 | Forza 10 Italia | Stadio Forza 10 Italia | `imagenes/escudos/escudo_06.jpeg` |
+| 7 | Milan City F.C. | Old Trafford | `imagenes/escudos/escudo_07.jpeg` |
+| 8 | Copa Latina Unida | Puerta del León | `imagenes/escudos/escudo_08.jpeg` |
+| 9 | Crest | Crest Arena | `imagenes/escudos/escudo_09.jpeg` |
+| 10 | Deutscher Fussball | Estadio Imperial Alemán | `imagenes/escudos/escudo_10.jpeg` |
+| 11 | Fussball Einheit | Einheit Arena | `imagenes/escudos/escudo_11.jpeg` |
 
 ## Escudo y personalización
 
@@ -111,8 +120,9 @@ Los cambios se hacen desde el partido: `ESC` abre la pausa y el botón
 once jugadores en campo a la izquierda y el banquillo disponible a la
 derecha. Se marca al que sale y al que entra (con clic o con el teclado,
 segundo toque para desmarcar) y el botón **Confirmar** ejecuta el
-cambio; la pareja elegida queda resaltada y cada equipo dispone de
-**5 cambios por partido** (tope ajustable con `SUSTITUCIONES_MAXIMAS`).
+cambio; la pareja elegida queda resaltada y tu equipo dispone de
+**5 cambios por partido** (tope ajustable con `SUSTITUCIONES_MAXIMAS`;
+los cambios se hacen sobre tu equipo).
 
 El sustituto hereda el hueco táctico del que sale (rol y posición),
 conservando su nombre, su dorsal y sus atributos, y el que sale pasa al
@@ -150,10 +160,12 @@ ejecutable) y se recupera al arrancar:
 
 | Tabla | Contenido |
 | --- | --- |
-| `ajustes` | Sonido, escudo (color, borde y forma), dorsales visibles, formación táctica, los uniformes de los dos equipos y el estadio (césped, momento, diseño y gradas) |
+| `ajustes` | Sonido, escudo (color, borde y forma), dorsales visibles, formación táctica, los uniformes de los dos equipos, el estadio (césped, momento, diseño y gradas) y las monedas acumuladas |
 | `jugadores` | Las 22 fichas de la plantilla: nombre, dorsal, rol, posición y factores de velocidad y fuerza |
+| `estadios_comprados` | Los identificadores de los estadios desbloqueados en la tienda (`municipal` siempre está disponible) |
 
-Los datos se guardan al empezar o reiniciar un partido y al cerrar el
+Los datos se guardan al empezar o reiniciar un partido, al cobrar una
+recompensa de entrenamiento, al comprar un estadio y al cerrar el
 juego (por cualquier vía, incluso cerrando la ventana). Si la base no
 existe se crea con los valores por defecto; si está dañada o bloqueada,
 el juego sigue funcionando con los valores en memoria y no guarda, sin
@@ -184,6 +196,32 @@ cuesta nada por fotograma. También queda guardado en la base de datos
 junto al resto de la personalización. La opción en curso se marca en
 la etiqueta de cada botón y las flechas ←/→ ajustan césped, momento,
 clima y diseño hacia atrás o adelante.
+
+## Estadios rivales y galería
+
+Cada uno de los 11 niveles de la campaña tiene su propio recinto, con
+una o varias fotos: fachada, interior, acceso, vista aérea o pabellón.
+Las imágenes optimizadas viven en `imagenes/estadios/` como
+`nivel_NN_exterior.jpeg`, `nivel_NN_interior.jpeg`, etc., en 1400×910
+y JPEG de alta calidad (unos 7,5 MB en total), listas para la ventana
+de 1000×650.
+
+- **Presentación previa:** al elegir **Campaña** en el selector de
+  modos se muestra el estadio del próximo rival sobre una foto a
+  pantalla completa, con su escudo, el nombre del club, el nombre del
+  recinto y el nivel. **Comenzar partido** entra al campo; **Volver**
+  regresa al selector. La misma presentación aparece al encadenar
+  niveles tras el final de un partido de campaña.
+- **Galería:** en **Opciones → Estadio → Galería de estadios** se
+  recorren los 11 recintos y todas sus vistas con los botones
+  `< Estadio`, `Estadio >`, `< Vista` y `Vista >` (o con las flechas
+  ←/→ sobre los botones de vista). La ficha lateral muestra el nivel,
+  el club, el estadio, la vista actual y su número dentro del recinto.
+
+Las fotos se cargan bajo demanda y se guardan en una caché acotada:
+la galería puede visitar todos los estadios sin reescalar la misma
+imagen en cada fotograma y sin retener las 27 fotos originales en
+memoria a la vez.
 
 ## Porteros inteligentes
 
@@ -292,19 +330,24 @@ La rival ya no repite el mismo guion partido tras partido:
 En **JUGAR** se abre el selector de **modos de juego**; la campaña es
 el primero y el resto son nuevos:
 
-- **Campaña:** los once niveles clásicos, uno tras otro.
+- **Campaña:** los once niveles clásicos, uno tras otro. Antes de
+  empezar (y al pasar de nivel) se presenta el estadio del rival.
 - **Liga:** todos contra todos en 11 jornadas por puntos (3 por
   victoria, 1 por empate). Los demás partidos de cada jornada se
   simulan por la fuerza de cada equipo, así que la clasificación es
   una tabla real; el texto final muestra tu posición y el campeón.
 - **Copa:** eliminación directa de 8 equipos (cuartos, semifinal y
-  final). Un empate se decide por penaltis.
+  final). Un empate se decide por penaltis simulados: no se juegan, se
+  sortean con ventaja para el rival más fuerte.
 - **Copa de Campeones:** dos grupos de 4; los dos primeros de cada
   uno pasan a las semifinales cruzadas y luego a la gran final.
 - **Supervivencia:** gana y el rival sube de nivel; pierde (o empata)
   y se acaba el intento, con tu racha como récord.
-- **Entrenamiento:** campo abierto sin oposición ni reloj para
-  practicar tiros, pases y regates contra el portero.
+- **Entrenamiento:** abre un submenú con tiros a puerta, penales,
+  dos contra uno, campo libre y la tienda de estadios. Los ejercicios
+  pagan monedas según su objetivo; el campo libre es el entrenamiento
+  sin oposición ni reloj para practicar tiros, pases y regates contra
+  el portero.
 - **Dos jugadores:** dos personas en el mismo teclado. Jugador 1:
   WASD, SHIFT izquierdo, ESPACIO y E; jugador 2: flechas, SHIFT
   derecho, ENTER y CTRL derecho, cada uno con su barra de energía.
@@ -318,6 +361,56 @@ modo en el punto donde estaba —jornada, ronda, clasificación o
 racha— y, una vez terminado, se borra para que el siguiente empiece
 de cero. Como solo hay un torneo activo por modo, puedes tener una
 Liga a medias y una Copa a medias a la vez.
+
+## Entrenamientos y monedas
+
+En **JUGAR → Entrenamiento** se abre un submenú con tres ejercicios
+puntuados, el campo libre y la tienda de estadios. Cada ejercicio tiene
+un objetivo y paga monedas solo si se cumple:
+
+| Ejercicio | Intentos | Objetivo | Premio base | Extra por gol |
+| --- | --- | --- | --- | --- |
+| Tiros a puerta | 8 disparos | 4 goles | 40 | +8 |
+| Penales | 5 penales | 3 goles | 60 | +12 |
+| Dos contra uno | 5 ataques | 3 goles | 80 | +15 |
+
+Las monedas ganadas se suman al contador y quedan guardadas en la base
+de datos. La recompensa se cobra una sola vez por sesión: al terminar
+aparece el resumen con el total y, si se repite con ESPACIO, empieza una
+sesión nueva que vuelve a pagar si se alcanza el objetivo. ESC vuelve al
+submenú.
+
+- **Tiros a puerta:** apunta con las flechas o `WASD` y chuta con
+  ESPACIO desde media distancia.
+- **Penales:** coloca el disparo con las flechas o `WASD` y confirma con
+  ESPACIO; el portero intenta adivinarlo.
+- **Dos contra uno:** conduce con `WASD` o flechas, sprint con `SHIFT`,
+  pasa con `E` y chuta con ESPACIO. Un compañero se abre para recibir y
+  un defensor persigue el balón.
+- **Campo libre:** el entrenamiento clásico sin oposición, reloj ni
+  recompensa, para practicar tiros, pases y regates contra el portero.
+
+## Tienda de estadios
+
+La tienda se abre desde **JUGAR → Entrenamiento → Tienda de estadios**
+(o desde la pantalla **Opciones → Estadio**) y gasta las monedas
+ganadas en recintos nuevos:
+
+| Estadio | Precio | Estilo |
+| --- | --- | --- |
+| Estadio Municipal | Gratis | Césped claro, de día y con público |
+| Amanecer Dorado | 250 | Césped a rayas y grada iluminada |
+| Coliseo Nocturno | 600 | Noche, césped oscuro y ajedrez |
+| Arena de Cristal | 900 | Césped artificial y círculos concéntricos |
+| Fortaleza Invernal | 1200 | Noche con nieve y líneas marcadas |
+| Estadio Tormenta | 1600 | Lluvia, viento y césped artificial |
+
+El botón de cada artículo muestra su precio o, si ya está comprado, la
+opción **Equipar**. Comprar descuenta las monedas, desbloquea el
+estadio y lo equipa al instante; equipar cambia el conjunto de césped,
+momento, diseño y clima del recinto. El estadio equipado se puede
+seguir personalizando en **Opciones → Estadio** y todo —monedas,
+compras y ajustes— se conserva entre sesiones en la base SQLite.
 
 ## Requisitos
 
@@ -367,11 +460,11 @@ genera localmente en `dist/` con el script anterior.
 | --- | --- |
 | `WASD` o flechas | Mover al jugador controlado |
 | `SHIFT` | Sprintar mientras quede energía |
-| `ESPACIO` | Chutar / avanzar tras un gol (celebración → repetición → saque), descanso o final |
+| `ESPACIO` | Chutar en partido y entrenamiento; apuntar y confirmar el penal; avanzar tras un gol (celebración → repetición → saque), descanso o final; repetir la sesión de entrenamiento |
 | `E` | Pasar al compañero más cercano |
 | `Q` | Cambiar el jugador controlado (cicla entre los locales por cercanía al balón) |
 | `R` | Volver a ver en cámara lenta la última mejor jugada |
-| `ESC` | En partido abre la pausa; en menús vuelve o sale |
+| `ESC` | En partido abre la pausa; en entrenamiento vuelve al submenú; en menús vuelve o sale |
 | Ratón | Elegir y pulsar los botones de los menús |
 | Flechas o `W/S` | Elegir una opción en los menús |
 | `ENTER` o `ESPACIO` | Confirmar la opción seleccionada en los menús |
@@ -456,16 +549,24 @@ el teclado.
 - **Estadio:** personaliza el césped (claro, oscuro o artificial), el
   momento (día o noche), el clima (despejado, lluvia o nieve), las
   gradas con aficionados y el diseño de corte de la cancha, con vista
-  previa en vivo.
+  previa en vivo; **Galería de estadios** recorre las fotos de los 11
+  recintos rivales.
+- **Entrenamientos:** submenú con tiros a puerta, penales, dos contra
+  uno, campo libre y la tienda de estadios; muestra las monedas
+  disponibles y el objetivo y premio de cada ejercicio.
+- **Tienda de estadios:** los seis recintos con su precio y su estilo;
+  los comprados se pueden equipar y el municipal siempre está
+  disponible.
 - **Palmarés:** la tabla de posiciones de la campaña, el historial de
   resultados y los trofeos desbloqueados.
 - **Cómo jugar:** resume los controles, los indicadores en pantalla y
   las reglas del partido.
 
 `ESC` también funciona como botón "volver" en las pantallas de
-configuración, ayuda, escudo, uniformes, editor, tácticas, estadio y
-palmarés. La navegación usa una
-pila: cada pantalla guarda de dónde se llegó, así que `Volver` o `ESC`
+configuración, ayuda, escudo, uniformes, editor, tácticas, estadio,
+galería de estadios, entrenamientos, tienda de estadios, presentación y
+palmarés. La navegación usa una pila: cada pantalla guarda de dónde se
+llegó, así que `Volver` o `ESC`
 regresan siempre a la pantalla anterior aunque se hayan encadenado
 varias (por ejemplo Pausa → Opciones → Editor); volver deshace la ruta
 paso a paso en lugar de saltar siempre al mismo sitio. En los menús,
@@ -487,9 +588,14 @@ futbol-silueta/
 │   ├── menu_opciones.jpeg
 │   ├── menu_pausa.jpeg
 │   ├── ayuda_controles.jpeg
-│   └── escudos/
-│       ├── escudo_01.jpeg
-│       ├── escudo_02.jpeg
+│   ├── escudos/
+│   │   ├── escudo_01.jpeg
+│   │   ├── escudo_02.jpeg
+│   │   └── ...
+│   └── estadios/
+│       ├── nivel_01_exterior.jpeg
+│       ├── nivel_01_interior.jpeg
+│       ├── nivel_02_exterior.jpeg
 │       └── ...
 ├── tests/
 │   ├── __init__.py
@@ -497,9 +603,11 @@ futbol-silueta/
 │   ├── test_menus.py           # Pruebas de menús y botones
 │   ├── test_aplicacion.py      # Pruebas del bucle y las pantallas
 │   ├── test_escudos.py         # Pruebas de escudos y personalización
+│   ├── test_estadios_rivales.py # Estadios de la campaña y galería
 │   ├── test_guardado.py        # Pruebas de la base de datos SQLite
 │   ├── test_porteros.py        # Pruebas de los porteros inteligentes
-│   └── test_modos.py           # Pruebas de liga, copa y demás modos
+│   ├── test_modos.py           # Pruebas de liga, copa y demás modos
+│   └── test_entrenamientos.py  # Entrenamientos, premios y tienda
 └── futbol_silueta/
     ├── __init__.py
     ├── configuracion.py        # Constantes, colores, formación y textos
@@ -515,6 +623,9 @@ futbol-silueta/
     ├── repeticion.py           # Instantes congelados para repetir goles
     ├── estadisticas.py         # Cifras del partido, tabla, historial y trofeos
     ├── estadios.py             # Césped, momento, gradas y diseño de cancha
+    ├── estadios_rivales.py     # Estadios de la campaña, fotos y galería
+    ├── entrenamientos.py       # Tiros, penales y dos contra uno con premios
+    ├── tienda_estadios.py      # Catálogo de estadios que se compran
     ├── niveles.py              # Niveles de la campaña y dificultad
     ├── vista.py                # Todo el dibujo de la partida
     ├── menus.py                # Fondos, botones y pantallas de menú
@@ -525,13 +636,13 @@ futbol-silueta/
 ## Pruebas
 
 La suite usa SDL en modo headless, así que no abre ventana ni necesita
-audio real. Incluye 149 pruebas de simulación, modos de juego, IA adaptativa
+audio real. Incluye 190 pruebas de simulación, modos de juego, IA adaptativa
 y táctica rival, presentación de transmisión, porteros inteligentes,
 repeticiones de gol, cambio de jugador, córners, estadísticas,
 palmarés y clima, suplentes y sustituciones, banquillo por defecto,
-estadios, menús, botones, tácticas, guardado, bucle principal, escudos,
-utilidades (carga de imágenes con reserva y plantillas incompletas)
-y dibujo:
+estadios personalizados, estadios rivales y su galería, menús, botones,
+tácticas, guardado, bucle principal, escudos, utilidades (carga de
+imágenes con reserva y plantillas incompletas) y dibujo:
 
 ```bash
 python -m unittest discover -s tests -t . -v
@@ -550,12 +661,13 @@ python tests/test_aplicacion.py
 ```
 
 Además, `verificar_navegacion.py` recorre a mano los flujos de menús,
-uniformes, editor, repeticiones, estadio, palmarés, córners, IA
-adaptativa y cambio de jugador (la pila de vuelta, ESC en cada
-pantalla, el ciclado de colores por prenda, la edición de nombres y
-dorsales, los ajustes de velocidad y fuerza, el clima, el
-re-visionado con R y la llegada de uniformes, fichas y estadio a los
-jugadores):
+uniformes, editor, repeticiones, estadio, galería de estadios,
+entrenamientos, tienda de estadios, palmarés, córners, IA adaptativa y
+cambio de jugador (la pila de vuelta, ESC en cada pantalla, el ciclado
+de colores por prenda, la edición de nombres y dorsales, los ajustes de
+velocidad y fuerza, el clima, la presentación del estadio rival, la
+compra y el equipado de estadios, el re-visionado con R y la llegada de
+uniformes, fichas y estadio a los jugadores):
 
 ```bash
 python verificar_navegacion.py
@@ -563,6 +675,52 @@ python verificar_navegacion.py
 
 ## Cambios de esta versión
 
+- Se añadieron los entrenamientos con recompensa: **Tiros a puerta**
+  (8 disparos, 4 goles), **Penales** (5 penales, 3 goles) y **Dos
+  contra uno** (5 ataques, 3 goles). Cada sesión paga monedas solo si
+  se alcanza el objetivo (40 + 8 por gol, 60 + 12 por gol y 80 + 15
+  por gol, respectivamente) y el resumen permite repetir con ESPACIO.
+- Se añadió la tienda de estadios: seis recintos (municipal gratuito,
+  amanecer, nocturno, cristal, invierno y tormenta) que se compran con
+  las monedas y se equipan al instante, cambiando césped, momento,
+  diseño y clima. Se abre desde Entrenamiento y desde Opciones →
+  Estadio.
+- Las monedas y los estadios comprados se guardan en SQLite (columna
+  `monedas` y tabla `estadios_comprados`) y las bases anteriores se
+  migran solas con cero monedas y solo el estadio municipal.
+- Se corrigió la Copa de Campeones: ganar la semifinal (o la final) como
+  visitante del cruce —segundo del grupo— eliminaba al jugador o le
+  regalaba el título al rival; los goles ahora se traducen a la
+  perspectiva del cruce antes de decidir el ganador.
+- Se corrigió el guardado del nivel de campaña: jugar o cerrar el juego
+  desde un torneo (Liga, Copa, Campeones, Supervivencia, entrenamientos
+  o la tienda) ya no rebobina la campaña al nivel del rival de la ronda.
+- Los temporizadores del partido (cooldowns de robo y liberación,
+  celebración de gol, córner, decisiones de la IA, viento, contraataque
+  y rotaciones) pasaron al reloj de simulación: pausar o abrir menús ya
+  no vence los tiempos del partido de anticipo.
+- Se corrigió un cierre inesperado de la cámara dinámica: con el zoom
+  rozando el 1.0, el redondeo podía dejar el encuadre un píxel fuera del
+  lienzo; el rectángulo de cámara ahora se recorta siempre al área
+  visible.
+- La ronda del torneo (LIGA · J3/11, COPA · SEMIFINAL, …) entra en la
+  caché del marcador, que ya no muestra la ronda vieja tras avanzar de
+  jornada; las etiquetas de Liga y Copa quedan acotadas al terminar.
+- Los textos de la Copa de Campeones distinguen la ronda de eliminación
+  (grupos o semifinal) y anuncian el paso a semifinales y a la final.
+- El módulo de guardado refresca las etiquetas de los menús a través de
+  un método público (`Menus.refrescar_etiquetas`) en lugar de tocar sus
+  métodos privados.
+- Se añadieron los estadios de los 11 rivales de la campaña, con 27
+  fotos optimizadas en `imagenes/estadios/` (fachada, interior, acceso,
+  vista aérea y pabellón) y sus nombres de recinto.
+- La campaña muestra una presentación previa con el estadio, el escudo
+  y el club rival antes de cada partido; también al encadenar niveles.
+- Se añadió la galería **Opciones → Estadio → Galería de estadios** para
+  recorrer los 11 recintos y todas sus vistas, con carga bajo demanda y
+  caché acotada.
+- Los nombres de los rivales de los niveles 3 a 11 ahora coinciden con
+  los clubes de sus escudos.
 - Se añadieron los modos de juego: JUGAR abre un selector con la
   campaña clásica y seis modos nuevos —Liga por puntos con jornada y
   clasificación simulada, Copa de eliminación directa, Copa de
@@ -627,10 +785,10 @@ python verificar_navegacion.py
 - La calidad del portero rival escala con el nivel de la campaña (en el
   1 falla mucho y en el 11 casi nada); el portero local mantiene una
   calidad fija, segura pero no perfecta.
-- Robustez de assets: las imágenes (escudos y fondos de menú) se cargan
-  con una reserva generada si el archivo falta o está dañado, en lugar
-  de abortar al arrancar; el localizador de imágenes vive en un solo
-  lugar (`utilidades`) y ya no está duplicado.
+- Robustez de assets: las imágenes (escudos, estadios y fondos de menú)
+  se cargan con una reserva generada si el archivo falta o está dañado,
+  en lugar de abortar al arrancar; el localizador de imágenes vive en un
+  solo lugar (`utilidades`) y ya no está duplicado.
 - La plantilla guardada se normaliza a once fichas por equipo al crear
   a los jugadores: si quedó corta o larga (datos antiguos o dañados), el
   campo siempre sale completo con los jugadores por defecto.

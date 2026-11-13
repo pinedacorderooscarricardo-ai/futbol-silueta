@@ -13,5 +13,10 @@ python -m PyInstaller `
     --add-data "imagenes;imagenes" `
     main.py
 
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "PyInstaller falló (código $LASTEXITCODE). Cierra FutbolSilueta.exe si está abierto y vuelve a intentarlo."
+    exit $LASTEXITCODE
+}
+
 Write-Host ""
 Write-Host "Ejecutable creado en dist\FutbolSilueta.exe"

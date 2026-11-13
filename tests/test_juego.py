@@ -29,7 +29,6 @@ from futbol_silueta.configuracion import (
     PORTERIA_CENTRO,
     PRESORES_POR_EQUIPO,
     RADIO_BALON,
-    VELOCIDAD_IA,
     Equipo,
     Estado,
     Rol,
@@ -128,7 +127,7 @@ class JuegoTests(unittest.TestCase):
 
         aplicar_instante(juego, instante)
 
-        x, y, tiene_balon = instante.jugadores[0]
+        x, y, _ = instante.jugadores[0]
         self.assertEqual((jugador.pos.x, jugador.pos.y), (x, y))
         self.assertEqual(jugador.rect.center, (round(x), round(y)))
         self.assertFalse(jugador.tiene_balon)
@@ -180,9 +179,25 @@ class JuegoTests(unittest.TestCase):
         juego = self.juego
         juego.estado = Estado.GOL
         juego.repeticion = None
-        juego.tiempo_gol = pygame.time.get_ticks() - DURACION_GOL
+        # El reloj del partido es de simulación: se vence relativo a él.
+        juego.tiempo_gol -= DURACION_GOL
 
         juego.actualizar(1.0 / 60.0)
+
+        self.assertIs(juego.estado, Estado.JUGANDO)
+
+    def test_la_celebracion_avanza_con_tiempo_simulado(self) -> None:
+        juego = self.juego
+        juego.estado = Estado.GOL
+        juego.repeticion = None
+
+        # El reloj del partido es de simulación: sin tocar el reloj de
+        # pared, la celebración de 1,5 s expira en ~2 s simulados.
+        for _ in range(120):
+            juego.actualizar(1.0 / 60.0)
+
+            if juego.estado is not Estado.GOL:
+                break
 
         self.assertIs(juego.estado, Estado.JUGANDO)
 
@@ -331,6 +346,21 @@ class JuegoTests(unittest.TestCase):
             self.vista.dibujar(self.juego)
 
         self.assertIsInstance(self.juego.estado, Estado)
+
+    def test_la_camara_recortada_nunca_sale_del_lienzo(self) -> None:
+        # Con el zoom rozando 1.0, el redondeo del centro podía dejar el
+        # rectángulo de la cámara un píxel fuera del lienzo y reventar
+        # subsurface. El recorte lo mantiene siempre dentro.
+        for _ in range(180):
+            self.juego.actualizar(1.0 / 60.0)
+            self.vista.dibujar(self.juego)
+
+            camara = self.vista._camara_rect()
+
+            self.assertGreaterEqual(camara.left, 0)
+            self.assertGreaterEqual(camara.top, 0)
+            self.assertLessEqual(camara.right, ANCHO)
+            self.assertLessEqual(camara.bottom, ALTO)
 
     def test_personalizar_el_estadio_cambia_la_seleccion(self) -> None:
         estadio = Estadio(
@@ -700,7 +730,7 @@ class JuegoTests(unittest.TestCase):
         self.assertTrue(juego._en_contraataque)
 
         # Expira el tiempo (o pierde el balón) y se apaga.
-        juego._fin_contraataque = pygame.time.get_ticks() - 1
+        juego._fin_contraataque = juego._reloj - 1
         juego.actualizar_ia(1.0 / 60.0)
         self.assertFalse(juego._en_contraataque)
 
@@ -868,7 +898,7 @@ class JuegoTests(unittest.TestCase):
         )
         # El viento se renueva cada INTERVALO_VIENTO: se fuerza la
         # ventana vencida para comprobar el cambio al instante.
-        juego._tiempo_viento = pygame.time.get_ticks() - INTERVALO_VIENTO
+        juego._tiempo_viento = juego._reloj - INTERVALO_VIENTO
 
         juego._actualizar_viento()
 

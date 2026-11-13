@@ -13,6 +13,7 @@ campaña. El equipo del jugador es el 0.
 from __future__ import annotations
 
 import random
+from collections.abc import Sequence
 from enum import StrEnum
 
 from .niveles import NIVEL_MAXIMO
@@ -66,7 +67,7 @@ class Solicitud(StrEnum):
 class _Stats:
     """Acumulador de una fila de la clasificación."""
 
-    __slots__ = ("pj", "pg", "pe", "pp", "gf", "gc", "puntos")
+    __slots__ = ("gc", "gf", "pe", "pg", "pj", "pp", "puntos")
 
     def __init__(self) -> None:
         self.pj = 0
@@ -96,7 +97,7 @@ class _Stats:
         return {campo: getattr(self, campo) for campo in self.__slots__}
 
     @classmethod
-    def deserializar(cls, datos: dict[str, int]) -> "_Stats":
+    def deserializar(cls, datos: dict[str, int]) -> _Stats:
         """Reconstruye una fila desde su diccionario guardado."""
         stats = cls()
 
@@ -118,13 +119,13 @@ def _calendario_round_robin(equipos: list[int]) -> list[list[tuple[int, int]]]:
     jornadas: list[list[tuple[int, int]]] = []
 
     for _ in range(len(equipos) - 1):
-        bloque = [fijo] + rotantes
+        bloque = [fijo, *rotantes]
         partidos = [
             (bloque[indice], bloque[-1 - indice])
             for indice in range(len(equipos) // 2)
         ]
         jornadas.append(partidos)
-        rotantes = [rotantes[-1]] + rotantes[:-1]
+        rotantes = [rotantes[-1], *rotantes[:-1]]
 
     return jornadas
 
@@ -148,6 +149,72 @@ def _simular(local: int, visitante: int) -> tuple[int, int]:
         nivel_de(visitante),
         nivel_de(local),
     )
+
+
+def _resultado_del_cruce(
+    local: int,
+    visitante: int,
+    goles_local: int,
+    goles_visitante: int,
+) -> tuple[int, int]:
+    """Goles desde la perspectiva del cruce.
+
+    Si el jugador es visitante en el cruce, los goles del partido se
+    invierten; si no juega, el resultado se simula por fuerza.
+    """
+    if local == JUGADOR:
+        return goles_local, goles_visitante
+
+    if visitante == JUGADOR:
+        return goles_visitante, goles_local
+
+    return _simular(local, visitante)
+
+
+def _ganador_del_cruce(
+    local: int,
+    visitante: int,
+    goles_local: int,
+    goles_visitante: int,
+) -> int:
+    """Ganador de un cruce; un empate se decide por penaltis."""
+    if goles_local > goles_visitante:
+        return local
+
+    if goles_visitante > goles_local:
+        return visitante
+
+    favorito = max(local, visitante)
+    return favorito if random.random() < 0.65 else min(local, visitante)
+
+
+def _resolver_cruces(
+    cruces: Sequence[tuple[int, int]],
+    goles_local: int,
+    goles_visitante: int,
+) -> tuple[list[int], bool]:
+    """Resuelve una ronda eliminatoria y avisa si el jugador cayó.
+
+    Devuelve los ganadores de cada cruce y si el jugador perdió el suyo.
+    """
+    ganadores: list[int] = []
+    perdio_jugador = False
+
+    for local, visitante in cruces:
+        gl, gv = _resultado_del_cruce(
+            local,
+            visitante,
+            goles_local,
+            goles_visitante,
+        )
+        ganador = _ganador_del_cruce(local, visitante, gl, gv)
+
+        if JUGADOR in (local, visitante) and ganador != JUGADOR:
+            perdio_jugador = True
+
+        ganadores.append(ganador)
+
+    return ganadores, perdio_jugador
 
 
 def _ordenar_tabla(tabla: dict[int, _Stats]) -> list[tuple[int, _Stats]]:
@@ -208,7 +275,7 @@ class Liga(TorneoBase):
     def __init__(self) -> None:
         # Rivales invertidos: el calendario arranca contra el más flojo
         # y la dificultad crece jornada a jornada.
-        equipos = [JUGADOR] + list(range(NIVEL_MAXIMO, 0, -1))
+        equipos = [JUGADOR, *range(NIVEL_MAXIMO, 0, -1)]
         self.calendario = _calendario_round_robin(equipos)
         self.jornada = 0
         self.tabla: dict[int, _Stats] = {
@@ -217,22 +284,22 @@ class Liga(TorneoBase):
 
     def rival_del_partido(self) -> int:
         for local, visitante in self.calendario[self.jornada]:
-            if local is JUGADOR:
+            if local == JUGADOR:
                 return visitante
-            if visitante is JUGADOR:
+            if visitante == JUGADOR:
                 return local
 
         raise AssertionError("jornada sin partido del jugador")
 
     def etiqueta(self) -> str:
-        return f"LIGA · J{self.jornada + 1}/{len(self.calendario)}"
+        return f"LIGA · J{min(self.jornada + 1, len(self.calendario))}/{len(self.calendario)}"
 
     def registrar(self, goles_local: int, goles_visitante: int) -> None:
         if self.terminado:
             return
 
         for local, visitante in self.calendario[self.jornada]:
-            if local is JUGADOR or visitante is JUGADOR:
+            if local == JUGADOR or visitante == JUGADOR:
                 gl, gv = goles_local, goles_visitante
             else:
                 gl, gv = _simular(local, visitante)
@@ -250,7 +317,7 @@ class Liga(TorneoBase):
         clasificacion = _ordenar_tabla(self.tabla)
 
         for posicion, (equipo, stats) in enumerate(clasificacion, start=1):
-            if equipo is JUGADOR:
+            if equipo == JUGADOR:
                 return posicion, stats
 
         raise AssertionError("el jugador no está en la tabla")
@@ -269,21 +336,6 @@ class Liga(TorneoBase):
             return f"¡CAMPEÓN DE LIGA con {stats.puntos} puntos!"
 
         return f"LIGA TERMINADA: {posicion}º con {stats.puntos} puntos"
-
-    def clasificacion_texto(self, filas: int = 4) -> list[str]:
-        """Primeras filas de la tabla, para mostrar en pantalla."""
-        texto: list[str] = []
-
-        for posicion, (_equipo, stats) in enumerate(
-            _ordenar_tabla(self.tabla)[:filas],
-            start=1,
-        ):
-            texto.append(
-                f"{posicion}. {stats.puntos} pts  "
-                f"({stats.pg}-{stats.pe}-{stats.pp})"
-            )
-
-        return texto
 
     def serializar(self) -> dict[str, object]:
         return {
@@ -329,44 +381,32 @@ class Copa(TorneoBase):
 
     def rival_del_partido(self) -> int:
         for local, visitante in self._emparejamientos:
-            if local is JUGADOR:
+            if local == JUGADOR:
                 return visitante
-            if visitante is JUGADOR:
+            if visitante == JUGADOR:
                 return local
 
         raise AssertionError("sin partido del jugador en esta ronda")
 
     def etiqueta(self) -> str:
-        return f"COPA · {self.RONDAS[self._ronda]}"
+        # Con el torneo decidido (_ronda == len(RONDAS)) el marcador
+        # sigue en la última ronda: el índice se acota por si el
+        # marcador se repinta en la pantalla final.
+        ronda = min(self._ronda, len(self.RONDAS) - 1)
+        return f"COPA · {self.RONDAS[ronda]}"
 
     def registrar(self, goles_local: int, goles_visitante: int) -> None:
         if self.terminado:
             return
 
-        ganadores: list[int] = []
+        ganadores, perdio_jugador = _resolver_cruces(
+            self._emparejamientos,
+            goles_local,
+            goles_visitante,
+        )
 
-        for local, visitante in self._emparejamientos:
-            if local is JUGADOR or visitante is JUGADOR:
-                gl, gv = goles_local, goles_visitante
-            else:
-                gl, gv = _simular(local, visitante)
-
-            if gl > gv:
-                ganador = local
-            elif gv > gl:
-                ganador = visitante
-            else:
-                # Penaltis: el rival más fuerte tiene ventaja.
-                favorito = max(local, visitante)
-                ganador = favorito if random.random() < 0.65 else min(
-                    local,
-                    visitante,
-                )
-
-            if JUGADOR in (local, visitante) and ganador is not JUGADOR:
-                self.eliminado = True
-
-            ganadores.append(ganador)
+        if perdio_jugador:
+            self.eliminado = True
 
         self._ronda += 1
 
@@ -459,9 +499,9 @@ class Campeones(TorneoBase):
             calendario_a, _ = self._calendarios()
 
             for local, visitante in calendario_a[self._jornada]:
-                if local is JUGADOR:
+                if local == JUGADOR:
                     return visitante
-                if visitante is JUGADOR:
+                if visitante == JUGADOR:
                     return local
 
             raise AssertionError("jornada de grupo sin partido del jugador")
@@ -469,15 +509,16 @@ class Campeones(TorneoBase):
         if self._fase is self.FASE_SEMIS:
             assert self._semifinales is not None
             for local, visitante in self._semifinales:
-                if local is JUGADOR:
+                if local == JUGADOR:
                     return visitante
-                if visitante is JUGADOR:
+                if visitante == JUGADOR:
                     return local
 
             raise AssertionError("semifinal sin partido del jugador")
 
         assert self._final is not None
-        return self._final[0] if JUGADOR is self._final[0] else self._final[1]
+        local, visitante = self._final
+        return visitante if local == JUGADOR else local
 
     def etiqueta(self) -> str:
         if self._fase is self.FASE_GRUPOS:
@@ -502,11 +543,12 @@ class Campeones(TorneoBase):
                 del grupo
 
                 for local, visitante in calendario[self._jornada]:
-                    if local is JUGADOR or visitante is JUGADOR:
-                        gl, gv = goles_local, goles_visitante
-                    else:
-                        gl, gv = _simular(local, visitante)
-
+                    gl, gv = _resultado_del_cruce(
+                        local,
+                        visitante,
+                        goles_local,
+                        goles_visitante,
+                    )
                     tabla[local].registrar(gl, gv)
                     tabla[visitante].registrar(gv, gl)
 
@@ -519,31 +561,14 @@ class Campeones(TorneoBase):
 
         if self._fase is self.FASE_SEMIS:
             assert self._semifinales is not None
-            ganadores: list[int] = []
+            ganadores, perdio_jugador = _resolver_cruces(
+                self._semifinales,
+                goles_local,
+                goles_visitante,
+            )
 
-            for local, visitante in self._semifinales:
-                if local is JUGADOR or visitante is JUGADOR:
-                    gl, gv = goles_local, goles_visitante
-                else:
-                    gl, gv = _simular(local, visitante)
-
-                if gl > gv:
-                    ganador = local
-                elif gv > gl:
-                    ganador = visitante
-                else:
-                    # Sin empates en una semifinal: penaltis, con el
-                    # rival más fuerte con ventaja.
-                    favorito = max(local, visitante)
-                    ganador = favorito if random.random() < 0.65 else min(
-                        local,
-                        visitante,
-                    )
-
-                if JUGADOR in (local, visitante) and ganador is not JUGADOR:
-                    self.eliminado = True
-
-                ganadores.append(ganador)
+            if perdio_jugador:
+                self.eliminado = True
 
             self._final = (ganadores[0], ganadores[1])
             self._fase = self.FASE_FINAL
@@ -551,16 +576,14 @@ class Campeones(TorneoBase):
 
         # Registro de la gran final.
         assert self._final is not None
-        gl, gv = goles_local, goles_visitante
+        gl, gv = _resultado_del_cruce(
+            *self._final,
+            goles_local,
+            goles_visitante,
+        )
+        ganador = _ganador_del_cruce(*self._final, gl, gv)
 
-        if gl == gv:
-            # Sin empates en una final: penaltis.
-            favorito = max(self._final)
-            ganador = favorito if random.random() < 0.65 else min(self._final)
-        else:
-            ganador = self._final[0] if gl > gv else self._final[1]
-
-        self.campeon = ganador is JUGADOR
+        self.campeon = ganador == JUGADOR
         self.eliminado = not self.campeon
         self._final_registrada = True
 
@@ -593,13 +616,22 @@ class Campeones(TorneoBase):
                         _ordenar_tabla(self.tabla_a),
                         start=1,
                     )
-                    if equipo is JUGADOR
+                    if equipo == JUGADOR
                 ),
                 4,
             )
             return f"Grupo A: {posicion}º tras la jornada {self._jornada}/3"
 
-        if self._fase is self.FASE_SEMIS and not self.eliminado:
+        if self.eliminado or self.terminado:
+            return self.texto_final_torneo()
+
+        if self._semifinales is not None and self._final is None:
+            # Fin de la fase de grupos con el jugador clasificado.
+            return "Clasificado: ¡a la semifinal!"
+
+        if self._final is not None and not self._final_registrada:
+            # La semifinal ya quedó registrada (registrar adelanta la
+            # fase a la final): ganarla anuncia la gran final.
             return "Semifinal superada: ¡a la final!"
 
         return self.texto_final_torneo()
@@ -610,6 +642,13 @@ class Campeones(TorneoBase):
 
         if self._final_registrada:
             return "SUBCAMPEÓN: la final se te resistió"
+
+        en_semifinal = self._semifinales is not None and any(
+            JUGADOR in cruce for cruce in self._semifinales
+        )
+
+        if en_semifinal:
+            return "ELIMINADO EN SEMIFINAL"
 
         return "ELIMINADO: no pasaste de la fase de grupos"
 

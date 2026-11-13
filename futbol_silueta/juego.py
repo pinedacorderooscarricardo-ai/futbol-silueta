@@ -125,6 +125,10 @@ class Juego:
         self.goles_visitante = 0
         self.ultimo_gol: Equipo | None = None
 
+        # Reloj de simulación (ms): avanza solo cuando la partida avanza
+        # (actualizar), así que las pausas y los menús no vencen los
+        # cooldowns ni acortan las celebraciones del partido.
+        self._reloj = 0.0
         self.tiempo_posesion = 0
         self.tiempo_liberacion = -COOLDOWN_LIBERACION
         self.tiempo_gol = 0
@@ -236,15 +240,19 @@ class Juego:
         """Nivel con el que se está jugando ahora."""
         return nivel_por_numero(self.nivel)
 
-    def _reiniciar_nivel(self, nivel: int, con_silbato: bool = True) -> None:
-        """Reinicia el partido para un nivel de la campaña."""
-        self.nivel = nivel
+    def _actualizar_escudo(self) -> None:
+        """Recrea el escudo del nivel conservando la personalización."""
         self.escudo = Escudo.crear_para_nivel(
             self.nivel,
             color=self.escudo.color,
             color_borde=self.escudo.color_borde,
             forma=self.escudo.forma,
         )
+
+    def _reiniciar_nivel(self, nivel: int, con_silbato: bool = True) -> None:
+        """Reinicia el partido para un nivel de la campaña."""
+        self.nivel = nivel
+        self._actualizar_escudo()
 
         self.goles_local = 0
         self.goles_visitante = 0
@@ -274,12 +282,7 @@ class Juego:
         con JUGAR, que ya se ocupa de recrear a los jugadores.
         """
         self.nivel = acotar(int(nivel), 1, NIVEL_MAXIMO)
-        self.escudo = Escudo.crear_para_nivel(
-            self.nivel,
-            color=self.escudo.color,
-            color_borde=self.escudo.color_borde,
-            forma=self.escudo.forma,
-        )
+        self._actualizar_escudo()
 
     def _reiniciar_partido(
         self,
@@ -460,7 +463,7 @@ class Juego:
         self.liberador = None
         self.tiempo_posesion = 0
         self.tiempo_liberacion = (
-            pygame.time.get_ticks() - COOLDOWN_LIBERACION
+            self._reloj - COOLDOWN_LIBERACION
         )
         self._invalidar_decisiones()
 
@@ -516,7 +519,7 @@ class Juego:
         de una jugada anterior (al reiniciar se crean otros nuevos).
         """
         self._tiempo_decision = (
-            pygame.time.get_ticks() - INTERVALO_DECISION_IA
+            self._reloj - INTERVALO_DECISION_IA
         )
         self._perseguidores = set()
         self._marcajes = {}
@@ -576,7 +579,7 @@ class Juego:
         self.portador = jugador
         self.liberador = None
         self.ultimo_tocador = jugador
-        self.tiempo_posesion = pygame.time.get_ticks()
+        self.tiempo_posesion = self._reloj
         self._invalidar_decisiones()
 
         if jugador.equipo is Equipo.LOCAL:
@@ -609,7 +612,7 @@ class Juego:
             self.portador.tiene_balon = False
 
         self.portador = None
-        self.tiempo_liberacion = pygame.time.get_ticks()
+        self.tiempo_liberacion = self._reloj
         self._invalidar_decisiones()
 
         if velocidad is not None:
@@ -644,7 +647,7 @@ class Juego:
         así un pase corto sí puede llegar a su destinatario y un rival
         puede interceptar un tiro rápido.
         """
-        ahora = pygame.time.get_ticks()
+        ahora = self._reloj
         liberador = self.liberador
 
         if (
@@ -671,7 +674,7 @@ class Juego:
             return
 
         if (
-            pygame.time.get_ticks() - self.tiempo_posesion
+            self._reloj - self.tiempo_posesion
             < COOLDOWN_ROBO
         ):
             return
@@ -849,7 +852,7 @@ class Juego:
 
     def _actualizar_viento(self) -> None:
         """Cambia la dirección y fuerza del viento de vez en cuando."""
-        ahora = pygame.time.get_ticks()
+        ahora = self._reloj
 
         if ahora - self._tiempo_viento < INTERVALO_VIENTO:
             return
@@ -909,7 +912,7 @@ class Juego:
         fotogramas. El contraataque termina al expirar o perder el balón
         y los rivales se cansan con el esfuerzo.
         """
-        ahora = pygame.time.get_ticks()
+        ahora = self._reloj
 
         if self._en_contraataque and (
             ahora >= self._fin_contraataque
@@ -1167,7 +1170,7 @@ class Juego:
 
     def _iniciar_contraataque(self) -> None:
         """Activa el contraataque si el robo deja espacios detrás."""
-        ahora = pygame.time.get_ticks()
+        ahora = self._reloj
 
         if ahora - self._ultimo_fin_contraataque < PAUSA_CONTRAATAQUE:
             return
@@ -1235,7 +1238,7 @@ class Juego:
         del compañero más descansado de su misma posición, con una
         pausa entre rotaciones para no marear al bloque.
         """
-        ahora = pygame.time.get_ticks()
+        ahora = self._reloj
 
         if ahora - self._ultima_rotacion < PAUSA_ROTACION:
             return
@@ -1329,7 +1332,7 @@ class Juego:
                 dt,
             )
             if (
-                pygame.time.get_ticks() - self.tiempo_posesion
+                self._reloj - self.tiempo_posesion
                 >= parametros.duracion_posesion_portero
             ):
                 self._despejar_portero(jugador)
@@ -1340,7 +1343,7 @@ class Juego:
             jugador.pos.y - PORTERIA_CENTRO,
         )
         tiempo_con_balon = (
-            pygame.time.get_ticks() - self.tiempo_posesion
+            self._reloj - self.tiempo_posesion
         )
 
         if (
@@ -1690,7 +1693,7 @@ class Juego:
             self.goles_visitante += 1
 
         self.estado = Estado.GOL
-        self.tiempo_gol = pygame.time.get_ticks()
+        self.tiempo_gol = self._reloj
         self.sonidos.gol()
 
         # Celebración: los del equipo que marca saltan y el portero
@@ -1738,7 +1741,7 @@ class Juego:
         self.liberador = None
         self.esquina = equipo
         self.estado = Estado.CORNER
-        self.tiempo_corner = pygame.time.get_ticks()
+        self.tiempo_corner = self._reloj
         self.sonidos.silbato()
 
         a_la_izquierda = self.balon.pos.x < CAMPO_RECT.centerx
@@ -1781,6 +1784,11 @@ class Juego:
 
     def actualizar(self, dt: float) -> None:
         """Avanza la simulación un fotograma."""
+        # El reloj del partido solo corre cuando el partido corre: una
+        # pausa abierta con ESC congela también los cooldowns, las
+        # celebraciones y los córners pendientes.
+        self._reloj += dt * 1000.0
+
         if self.estado in ESTADOS_ESPERA:
             return
 
@@ -1789,12 +1797,12 @@ class Juego:
             return
 
         if self.estado is Estado.CORNER:
-            if pygame.time.get_ticks() - self.tiempo_corner >= DURACION_CORNER:
+            if self._reloj - self.tiempo_corner >= DURACION_CORNER:
                 self._cobrar_corner()
             return
 
         if self.estado is Estado.GOL:
-            if pygame.time.get_ticks() - self.tiempo_gol >= DURACION_GOL:
+            if self._reloj - self.tiempo_gol >= DURACION_GOL:
                 self._iniciar_repeticion()
             return
 
@@ -1923,7 +1931,12 @@ class Juego:
 
         En la campaña se retoma el nivel que estaba en curso (el guardado
         o el alcanzado); en los torneos, el rival de la próxima ronda.
+        Si el torneo ya está decidido, reiniciar empieza uno nuevo: no
+        queda ninguna ronda de la que sacar rival.
         """
+        if self.torneo is not None and self.torneo.terminado:
+            self.torneo = crear_torneo(self.modo)
+
         nivel = (
             self.torneo.rival_del_partido() if self.torneo is not None else self.nivel
         )

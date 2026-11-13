@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
+from typing import ClassVar
 
 import pygame
 
@@ -14,13 +15,26 @@ from .configuracion import (
     ANCHO,
     BLANCO,
     NOMBRES_FORMACION,
+    ROJO_ENERGIA,
     SUSTITUCIONES_MAXIMAS,
     TITULARES_POR_EQUIPO,
+    VERDE_ENERGIA,
     Color,
     Equipo,
     Rol,
 )
-from .escudos import ESCUDO_PRESETS, FORMAS_ESCUDO, Escudo, FormaEscudo
+from .entrenamientos import (
+    ENTRENAMIENTOS,
+    TipoEntrenamiento,
+    definicion_entrenamiento,
+)
+from .escudos import (
+    ESCUDO_PRESETS,
+    FORMAS_ESCUDO,
+    Escudo,
+    FormaEscudo,
+    cargar_escudo,
+)
 from .modos import DESCRIPCIONES, ETIQUETAS, ModoJuego
 from .estadios import (
     CESPEDES,
@@ -37,11 +51,26 @@ from .estadios import (
     dibujar_cesped,
     siguiente_opcion,
 )
+from .estadios_rivales import (
+    ESTADIOS_RIVALES,
+    EstadioRival,
+    Vista,
+    cargar_vista,
+    cubrir,
+    estadio_rival,
+    limpiar_cache as limpiar_cache_estadios,
+)
 from .estadisticas import (
     CLAVE_LOCAL,
     TROFEOS,
     Resultado,
     TablaPosiciones,
+)
+from .tienda_estadios import (
+    CATALOGO_ESTADIOS,
+    ESTADIO_GRATIS,
+    ArticuloEstadio,
+    articulo_por_id,
 )
 from .niveles import nivel_por_numero
 from .plantilla import (
@@ -66,6 +95,7 @@ from .uniformes import (
 )
 from .utilidades import (
     DIRECTORIO_IMAGENES,
+    CacheTextos,
     acotar,
     cargar_imagen,
     equipo_rival,
@@ -86,8 +116,13 @@ class Pantalla(StrEnum):
     EDITOR = "editor"
     TACTICA = "tactica"
     ESTADIO = "estadio"
+    GALERIA = "galeria"
+    PRESENTACION = "presentacion"
     PALMARES = "palmares"
     SUSTITUCIONES = "sustituciones"
+    ENTRENAMIENTOS = "entrenamientos"
+    TIENDA_ESTADIOS = "tienda_estadios"
+    ENTRENAMIENTO_ACTIVO = "entrenamiento_activo"
 
 
 class Accion(StrEnum):
@@ -125,6 +160,12 @@ class Accion(StrEnum):
     ELEGIR_ENTRA = "elegir_entra"
     HACER_CAMBIO = "hacer_cambio"
     ESTADIO = "estadio"
+    GALERIA_ESTADIOS = "galeria_estadios"
+    ANTERIOR_ESTADIO = "anterior_estadio"
+    SIGUIENTE_ESTADIO = "siguiente_estadio"
+    VISTA_ESTADIO = "vista_estadio"
+    PRESENTAR = "presentar"
+    COMENZAR = "comenzar"
     PALMARES = "palmares"
     CESPED = "cesped"
     MOMENTO = "momento"
@@ -138,12 +179,25 @@ class Accion(StrEnum):
     SUPERVIVENCIA = "supervivencia"
     ENTRENAMIENTO = "entrenamiento"
     DOS_JUGADORES = "dos_jugadores"
+    TIROS = "tiros"
+    PENALES = "penales"
+    DOS_CONTRA_UNO = "dos_contra_uno"
+    CAMPO_LIBRE = "campo_libre"
+    TIENDA_ESTADIOS = "tienda_estadios"
+    COMPRAR_ESTADIO = "comprar_estadio"
+    EQUIPAR_ESTADIO = "equipar_estadio"
 
 
 
 _ETIQUETAS_MODO: dict[ModoJuego, str] = ETIQUETAS
 _ACCION_DE_MODO: dict[ModoJuego, Accion] = {
     modo: Accion(modo.value) for modo in ModoJuego
+}
+# Acciones del submenú de entrenamiento y su ejercicio.
+_ENTRENAMIENTO_DE_ACCION: dict[Accion, TipoEntrenamiento] = {
+    Accion.TIROS: TipoEntrenamiento.TIROS,
+    Accion.PENALES: TipoEntrenamiento.PENALES,
+    Accion.DOS_CONTRA_UNO: TipoEntrenamiento.DOS_CONTRA_UNO,
 }
 
 
@@ -215,16 +269,19 @@ class Menus:
     ACENTO_PAUSA: Color = (120, 255, 170)
     ACENTO_PANEL: Color = (90, 210, 255)
     TEXTO_SUAVE: Color = (185, 200, 215)
+    # Fotos de estadios escaladas que se conservan para no reescalar en
+    # cada fotograma; al superar el límite se descarta la más antigua.
+    _MAXIMO_CACHE_ESTADIOS = 4
 
     def __init__(self) -> None:
+        # Las fotos convertidas pertenecen al contexto gráfico actual:
+        # al crear los menús se descarta cualquier caché anterior.
+        limpiar_cache_estadios()
         self.fuente_titulo = pygame.font.SysFont("Arial", 42, bold=True)
         self.fuente_boton = pygame.font.SysFont("Arial", 24, bold=True)
         self.fuente_texto = pygame.font.SysFont("Arial", 20)
         self.fuente_pequena = pygame.font.SysFont("Arial", 16)
-        self._cache_textos: dict[
-            tuple[str, int, Color],
-            pygame.Surface,
-        ] = {}
+        self._texto = CacheTextos()
 
         self.fondo_principal = FondoImagen(
             DIRECTORIO_IMAGENES / "menu_principal.jpeg"
@@ -238,6 +295,13 @@ class Menus:
         self.fondo_ayuda = FondoImagen(
             DIRECTORIO_IMAGENES / "ayuda_controles.jpeg"
         )
+
+        # Monedas ganadas en los entrenamientos y estadios comprados en
+        # la tienda. El municipal es gratuito y siempre está disponible.
+        self.monedas = 0
+        self.estadios_comprados: set[str] = {ESTADIO_GRATIS}
+        self.mensaje_tienda = ""
+        self.mensaje_tienda_error = False
 
         self.botones: dict[Pantalla, list[Boton]] = {
             Pantalla.PRINCIPAL: self._botones_de_imagen(
@@ -327,6 +391,10 @@ class Menus:
             Pantalla.EDITOR: self._botones_de_editor(),
             Pantalla.TACTICA: self._botones_de_tactica(),
             Pantalla.ESTADIO: self._botones_de_estadio(),
+            Pantalla.GALERIA: self._botones_de_galeria(),
+            Pantalla.PRESENTACION: self._botones_de_presentacion(),
+            Pantalla.ENTRENAMIENTOS: self._botones_de_entrenamientos(),
+            Pantalla.TIENDA_ESTADIOS: self._botones_de_tienda(),
             # Se regenera al abrir la pantalla y tras cada cambio.
             Pantalla.SUSTITUCIONES: [],
             Pantalla.PALMARES: [
@@ -372,6 +440,15 @@ class Menus:
         self._cursor_activo: bool | None = None
         # Miniatura del estadio, cacheada por configuración.
         self._mini_estadio_cache: tuple[Estadio, pygame.Surface] | None = None
+        # Galería y presentación de estadios rivales: selección actual y
+        # fotos ya escaladas (caché acotada para no repetir el trabajo).
+        self.nivel_presentado = 1
+        self.indice_estadio_galeria = 0
+        self.indice_vista_galeria = 0
+        self._cache_estadios: dict[
+            tuple[str, int, int],
+            pygame.Surface,
+        ] = {}
 
         # Personalización del escudo del jugador.
         self.escudo_color: Color = ESCUDO_PRESETS[0][1]
@@ -442,6 +519,31 @@ class Menus:
             self.ACENTO_PANEL,
         )
 
+        # Entrenamientos con premio y tienda de estadios.
+        self.rect_panel_entrenamientos = pygame.Rect(150, 90, 700, 520)
+        self._panel_entrenamientos = self._crear_panel(
+            self.rect_panel_entrenamientos,
+            self.ACENTO_PRINCIPAL,
+        )
+        self.rect_panel_tienda = pygame.Rect(150, 90, 700, 520)
+        self._panel_tienda = self._crear_panel(
+            self.rect_panel_tienda,
+            self.ACENTO_PRINCIPAL,
+        )
+
+        # Presentación previa al partido y galería de estadios rivales.
+        self.rect_panel_presentacion = pygame.Rect(60, 85, 560, 400)
+        self._panel_presentacion = self._crear_panel(
+            self.rect_panel_presentacion,
+            self.ACENTO_PRINCIPAL,
+        )
+        self.rect_panel_galeria = pygame.Rect(40, 40, 920, 540)
+        self._panel_galeria = self._crear_panel(
+            self.rect_panel_galeria,
+            self.ACENTO_PANEL,
+        )
+        self.rect_imagen_galeria = pygame.Rect(60, 105, 600, 410)
+
         # Palmarés de la campaña: tabla de posiciones, historial de
         # resultados y trofeos desbloqueados (los llena el guardado).
         self.tabla_posiciones = TablaPosiciones()
@@ -476,6 +578,7 @@ class Menus:
             self.ACENTO_PANEL,
         )
         self._regenerar_sustituciones()
+        self._actualizar_etiquetas_tienda()
 
     # --------------------------------------------------
     # Construcción
@@ -598,8 +701,9 @@ class Menus:
             for indice, nombre in enumerate(NOMBRES_FORMACION)
         ]
 
-        return formaciones + [
-            Boton(pygame.Rect(190, 535, 370, 44), "Volver", Accion.VOLVER)
+        return [
+            *formaciones,
+            Boton(pygame.Rect(190, 535, 370, 44), "Volver", Accion.VOLVER),
         ]
 
     @staticmethod
@@ -637,32 +741,149 @@ class Menus:
         """Botones del estadio: césped, momento, clima, diseño, gradas."""
         return [
             Boton(
-                pygame.Rect(190, 220, 370, 44),
+                pygame.Rect(190, 214, 370, 38),
                 "Césped: CLARO",
                 Accion.CESPED,
             ),
             Boton(
-                pygame.Rect(190, 272, 370, 44),
+                pygame.Rect(190, 258, 370, 38),
                 "Momento: DÍA",
                 Accion.MOMENTO,
             ),
             Boton(
-                pygame.Rect(190, 324, 370, 44),
+                pygame.Rect(190, 302, 370, 38),
                 "Clima: DESPEJADO",
                 Accion.CLIMA,
             ),
             Boton(
-                pygame.Rect(190, 376, 370, 44),
+                pygame.Rect(190, 346, 370, 38),
                 "Diseño: CLÁSICO",
                 Accion.DISENO,
             ),
             Boton(
-                pygame.Rect(190, 428, 370, 44),
+                pygame.Rect(190, 390, 370, 38),
                 "Gradas: CON AFICIONADOS",
                 Accion.GRADAS,
             ),
             Boton(
-                pygame.Rect(190, 535, 370, 44),
+                pygame.Rect(190, 434, 370, 38),
+                "Galería de estadios",
+                Accion.GALERIA_ESTADIOS,
+            ),
+            Boton(
+                pygame.Rect(190, 478, 370, 38),
+                "Tienda de estadios",
+                Accion.TIENDA_ESTADIOS,
+            ),
+            Boton(
+                pygame.Rect(190, 522, 370, 38),
+                "Volver",
+                Accion.VOLVER,
+            ),
+        ]
+
+    @staticmethod
+    def _botones_de_entrenamientos() -> list[Boton]:
+        """Ejercicios con premio, campo libre y acceso a la tienda."""
+        acciones = (
+            Accion.TIROS,
+            Accion.PENALES,
+            Accion.DOS_CONTRA_UNO,
+        )
+        botones = [
+            Boton(
+                pygame.Rect(280, 238 + indice * 48, 440, 40),
+                definicion.nombre,
+                acciones[indice],
+            )
+            for indice, definicion in enumerate(ENTRENAMIENTOS)
+        ]
+        botones.extend(
+            (
+                Boton(
+                    pygame.Rect(280, 382, 440, 40),
+                    "Campo libre (sin premio)",
+                    Accion.CAMPO_LIBRE,
+                ),
+                Boton(
+                    pygame.Rect(280, 430, 440, 40),
+                    "Tienda de estadios",
+                    Accion.TIENDA_ESTADIOS,
+                ),
+                Boton(
+                    pygame.Rect(280, 478, 440, 40),
+                    "Volver",
+                    Accion.VOLVER,
+                ),
+            )
+        )
+        return botones
+
+    @staticmethod
+    def _botones_de_tienda() -> list[Boton]:
+        """Un botón por estadio del catálogo más la vuelta."""
+        botones = [
+            Boton(
+                pygame.Rect(185, 214 + indice * 44, 630, 36),
+                articulo.nombre,
+                Accion.COMPRAR_ESTADIO,
+                valor=articulo.id,
+            )
+            for indice, articulo in enumerate(CATALOGO_ESTADIOS)
+        ]
+        botones.append(
+            Boton(
+                pygame.Rect(350, 548, 300, 38),
+                "Volver",
+                Accion.VOLVER,
+            )
+        )
+        return botones
+
+    @staticmethod
+    def _botones_de_presentacion() -> list[Boton]:
+        """Botones de la presentación: comenzar el partido o volver."""
+        return [
+            Boton(
+                pygame.Rect(280, 545, 400, 54),
+                "Comenzar partido",
+                Accion.COMENZAR,
+            ),
+            Boton(
+                pygame.Rect(710, 545, 200, 54),
+                "Volver",
+                Accion.VOLVER,
+            ),
+        ]
+
+    @staticmethod
+    def _botones_de_galeria() -> list[Boton]:
+        """Botones de la galería: recorrer estadios y vistas, y volver."""
+        return [
+            Boton(
+                pygame.Rect(680, 315, 130, 40),
+                "< Estadio",
+                Accion.ANTERIOR_ESTADIO,
+            ),
+            Boton(
+                pygame.Rect(820, 315, 130, 40),
+                "Estadio >",
+                Accion.SIGUIENTE_ESTADIO,
+            ),
+            Boton(
+                pygame.Rect(680, 365, 130, 40),
+                "< Vista",
+                Accion.VISTA_ESTADIO,
+                valor=-1,
+            ),
+            Boton(
+                pygame.Rect(820, 365, 130, 40),
+                "Vista >",
+                Accion.VISTA_ESTADIO,
+                valor=1,
+            ),
+            Boton(
+                pygame.Rect(680, 495, 270, 44),
                 "Volver",
                 Accion.VOLVER,
             ),
@@ -744,6 +965,131 @@ class Menus:
         self._estadio = estadio
         self._actualizar_etiquetas_estadio()
 
+    @property
+    def estadio_galeria(self) -> EstadioRival:
+        """Estadio rival que se está viendo en la galería."""
+        self.indice_estadio_galeria %= len(ESTADIOS_RIVALES)
+        return ESTADIOS_RIVALES[self.indice_estadio_galeria]
+
+    @property
+    def vista_galeria(self) -> Vista:
+        """Vista fotográfica que se está viendo en la galería."""
+        estadio = self.estadio_galeria
+        self.indice_vista_galeria %= len(estadio.vistas)
+        return estadio.vistas[self.indice_vista_galeria]
+
+    def mostrar_presentacion(self, nivel: int) -> None:
+        """Muestra el estadio del nivel antes de saltar al partido.
+
+        Se usa al encadenar niveles de la campaña: la aplicación ya
+        preparó el partido y aquí solo se presenta el recinto rival.
+        """
+        self.nivel_presentado = round(acotar(nivel, 1, len(ESTADIOS_RIVALES)))
+        self._cambiar_pantalla(Pantalla.PRESENTACION)
+
+    def abrir_galeria(self) -> None:
+        """Abre la galería de estadios desde el primer recinto."""
+        self.indice_estadio_galeria = 0
+        self.indice_vista_galeria = 0
+        self._navegar(Pantalla.GALERIA)
+
+    def abrir_entrenamientos(self) -> None:
+        """Vuelve al submenú de entrenamientos."""
+        self._cambiar_pantalla(Pantalla.ENTRENAMIENTOS)
+
+    def abrir_entrenamiento_activo(self) -> None:
+        """Deja la pantalla lista para que la aplicación dibuje la sesión."""
+        self._cambiar_pantalla(Pantalla.ENTRENAMIENTO_ACTIVO)
+
+    def abrir_tienda_estadios(self) -> None:
+        """Abre la tienda de estadios con las etiquetas al día."""
+        self.mensaje_tienda = ""
+        self.mensaje_tienda_error = False
+        self._actualizar_etiquetas_tienda()
+        self._navegar(Pantalla.TIENDA_ESTADIOS)
+
+    def _comprar_estadio(self, identificador: str) -> None:
+        """Compra un estadio si hay monedas y lo equipa."""
+        articulo = articulo_por_id(identificador)
+
+        if articulo is None:
+            return
+
+        if identificador in self.estadios_comprados:
+            self._equipar_estadio(articulo)
+            return
+
+        if self.monedas < articulo.precio:
+            faltan = articulo.precio - self.monedas
+            self.mensaje_tienda = (
+                f"Te faltan {faltan} monedas para {articulo.nombre}."
+            )
+            self.mensaje_tienda_error = True
+            self._actualizar_etiquetas_tienda()
+            return
+
+        self.monedas = max(0, self.monedas - articulo.precio)
+        self.estadios_comprados.add(identificador)
+        self.adoptar_estadio(articulo.estadio)
+        self.mensaje_tienda = f"¡Compraste {articulo.nombre}! Ya está equipado."
+        self.mensaje_tienda_error = False
+        self._accion_pendiente = Accion.COMPRAR_ESTADIO
+        self._actualizar_etiquetas_tienda()
+
+    def _equipar_estadio(self, articulo: ArticuloEstadio) -> None:
+        """Pone en uso un estadio que ya pertenece al jugador."""
+        identificador = articulo.id
+
+        if identificador not in self.estadios_comprados:
+            return
+
+        self.adoptar_estadio(articulo.estadio)
+        self.mensaje_tienda = f"Estadio equipado: {articulo.nombre}."
+        self.mensaje_tienda_error = False
+        self._accion_pendiente = Accion.EQUIPAR_ESTADIO
+        self._actualizar_etiquetas_tienda()
+
+    def _actualizar_etiquetas_tienda(self) -> None:
+        """Muestra precio, compra o uso según el estado de cada estadio."""
+        for boton in self.botones.get(Pantalla.TIENDA_ESTADIOS, ()):
+            if not isinstance(boton.valor, str):
+                continue
+
+            articulo = articulo_por_id(boton.valor)
+
+            if articulo is None:
+                continue
+
+            if boton.valor in self.estadios_comprados:
+                boton.accion = Accion.EQUIPAR_ESTADIO
+                estado = (
+                    "EN USO"
+                    if self._estadio == articulo.estadio
+                    else "USAR"
+                )
+                boton.etiqueta = f"{articulo.nombre} · {estado}"
+            else:
+                boton.accion = Accion.COMPRAR_ESTADIO
+                precio = (
+                    "GRATIS"
+                    if articulo.precio <= 0
+                    else f"{articulo.precio} monedas"
+                )
+                boton.etiqueta = f"{articulo.nombre} · {precio}"
+
+    def _cambiar_estadio_galeria(self, paso: int) -> None:
+        """Avanza o retrocede de estadio en la galería."""
+        self.indice_estadio_galeria = (
+            self.indice_estadio_galeria + paso
+        ) % len(ESTADIOS_RIVALES)
+        self.indice_vista_galeria = 0
+
+    def _cambiar_vista_galeria(self, paso: int) -> None:
+        """Avanza o retrocede de foto dentro del estadio actual."""
+        self.indice_vista_galeria = (
+            self.indice_vista_galeria + paso
+        ) % len(self.estadio_galeria.vistas)
+
     def consumir_accion(self) -> Accion | None:
         """Devuelve y borra la acción que debe ejecutar la aplicación."""
         accion = self._accion_pendiente
@@ -787,7 +1133,10 @@ class Menus:
 
     def procesar_evento(self, evento: pygame.event.Event) -> None:
         """Procesa ratón y teclado cuando no se está jugando."""
-        if self.pantalla is Pantalla.PARTIDO:
+        if self.pantalla in (
+            Pantalla.PARTIDO,
+            Pantalla.ENTRENAMIENTO_ACTIVO,
+        ):
             return
 
         if evento.type == pygame.MOUSEMOTION:
@@ -811,7 +1160,10 @@ class Menus:
 
     def procesar_tecla(self, tecla: int) -> None:
         """Navega por el menú con el teclado."""
-        if self.pantalla is Pantalla.PARTIDO:
+        if self.pantalla in (
+            Pantalla.PARTIDO,
+            Pantalla.ENTRENAMIENTO_ACTIVO,
+        ):
             return
 
         if self._editando_nombre:
@@ -860,6 +1212,7 @@ class Menus:
             Accion.DISENO,
             Accion.MOMENTO,
             Accion.PRENDA,
+            Accion.VISTA_ESTADIO,
         )
     )
 
@@ -902,10 +1255,16 @@ class Menus:
             Pantalla.TACTICA,
             Pantalla.MODOS,
             Pantalla.ESTADIO,
+            Pantalla.GALERIA,
+            Pantalla.PRESENTACION,
             Pantalla.PALMARES,
             Pantalla.SUSTITUCIONES,
+            Pantalla.ENTRENAMIENTOS,
+            Pantalla.TIENDA_ESTADIOS,
         ):
             self._retroceder()
+        elif self.pantalla is Pantalla.ENTRENAMIENTO_ACTIVO:
+            self.abrir_entrenamientos()
 
     def _ejecutar(
         self,
@@ -983,16 +1342,54 @@ class Menus:
             self._navegar(Pantalla.MODOS)
         elif accion in _ACCION_DE_MODO.values():
             self.modo_seleccionado = ModoJuego(accion.value)
+
+            if self.modo_seleccionado is ModoJuego.ENTRENAMIENTO:
+                # El modo de entrenamiento abre su propio submenú: los
+                # ejercicios con premio viven en la pantalla de al lado.
+                self._navegar(Pantalla.ENTRENAMIENTOS)
+            elif self.modo_seleccionado is ModoJuego.CAMPANA:
+                # La campaña presenta el estadio rival y arranca el
+                # partido detrás: "Comenzar" solo cambia de pantalla.
+                self._navegar(Pantalla.PRESENTACION)
+                self._accion_pendiente = Accion.PRESENTAR
+            else:
+                self._cambiar_pantalla(Pantalla.PARTIDO)
+                self._accion_pendiente = Accion.JUGAR
+        elif accion in _ENTRENAMIENTO_DE_ACCION:
+            # La aplicación crea la sesión y toma el control de la
+            # pantalla; aquí solo se deja la acción pedida.
+            self._cambiar_pantalla(Pantalla.ENTRENAMIENTO_ACTIVO)
+            self._accion_pendiente = accion
+        elif accion is Accion.CAMPO_LIBRE:
+            self.modo_seleccionado = ModoJuego.ENTRENAMIENTO
             self._cambiar_pantalla(Pantalla.PARTIDO)
             self._accion_pendiente = Accion.JUGAR
+        elif accion is Accion.TIENDA_ESTADIOS:
+            self.abrir_tienda_estadios()
+        elif (
+            accion is Accion.COMPRAR_ESTADIO
+            and boton is not None
+            and isinstance(boton.valor, str)
+        ):
+            self._comprar_estadio(boton.valor)
+            return
+        elif (
+            accion is Accion.EQUIPAR_ESTADIO
+            and boton is not None
+            and isinstance(boton.valor, str)
+        ):
+            articulo = articulo_por_id(boton.valor)
+
+            if articulo is not None:
+                self._equipar_estadio(articulo)
+
+            return
         elif accion is Accion.CONTINUAR:
             self._cambiar_pantalla(Pantalla.PARTIDO)
         elif accion is Accion.REINICIAR:
             self._cambiar_pantalla(Pantalla.PARTIDO)
             self._accion_pendiente = Accion.REINICIAR
-        elif accion is Accion.CONFIGURACION:
-            self._navegar(Pantalla.OPCIONES)
-        elif accion is Accion.OPCIONES:
+        elif accion is Accion.CONFIGURACION or accion is Accion.OPCIONES:
             self._navegar(Pantalla.OPCIONES)
         elif accion is Accion.AYUDA:
             self._navegar(Pantalla.AYUDA)
@@ -1020,6 +1417,23 @@ class Menus:
             self.abrir_sustituciones()
         elif accion is Accion.ESTADIO:
             self._navegar(Pantalla.ESTADIO)
+        elif accion is Accion.GALERIA_ESTADIOS:
+            self.abrir_galeria()
+        elif accion is Accion.ANTERIOR_ESTADIO:
+            self._cambiar_estadio_galeria(-1)
+        elif accion is Accion.SIGUIENTE_ESTADIO:
+            self._cambiar_estadio_galeria(1)
+        elif accion is Accion.VISTA_ESTADIO:
+            if direccion:
+                paso_vista = direccion
+            elif boton is not None and isinstance(boton.valor, int):
+                paso_vista = boton.valor
+            else:
+                paso_vista = 1
+
+            self._cambiar_vista_galeria(paso_vista)
+        elif accion is Accion.COMENZAR:
+            self._cambiar_pantalla(Pantalla.PARTIDO)
         elif accion is Accion.PALMARES:
             self._navegar(Pantalla.PALMARES)
         elif accion is Accion.EQUIPO_EDITOR:
@@ -1116,6 +1530,18 @@ class Menus:
         self._actualizar_etiquetas_editor()
         self._actualizar_etiquetas_estadio()
 
+    def refrescar_etiquetas(self) -> None:
+        """Refresca todas las etiquetas tras aplicar un guardado.
+
+        Es la puerta pública para el módulo de guardado, que no debe
+        llamar a los métodos privados de refresco uno por uno: si se
+        añade una pantalla con etiquetas, se añade aquí.
+        """
+        self._actualizar_etiqueta_sonido()
+        self._actualizar_etiquetas_uniforme()
+        self._actualizar_etiquetas_editor()
+        self._actualizar_etiquetas_tienda()
+
     def _actualizar_etiqueta_sonido(self) -> None:
         estado = "ACTIVADO" if self.sonido_activado else "DESACTIVADO"
 
@@ -1123,7 +1549,7 @@ class Menus:
             if boton.accion is Accion.SONIDO:
                 boton.etiqueta = f"Sonido: {estado}"
 
-    _TITULOS_PRENDA: dict[str, str] = {
+    _TITULOS_PRENDA: ClassVar[dict[str, str]] = {
         "camiseta": "Camiseta",
         "pantalon": "Pantalón",
         "medias": "Medias",
@@ -1690,6 +2116,10 @@ class Menus:
                 self.rect_panel_estadio.topleft,
             )
             self._dibujar_estadio(pantalla)
+        elif self.pantalla is Pantalla.PRESENTACION:
+            self._dibujar_presentacion(pantalla)
+        elif self.pantalla is Pantalla.GALERIA:
+            self._dibujar_galeria(pantalla)
         elif self.pantalla is Pantalla.PALMARES:
             self.fondo_opciones.dibujar(pantalla)
             pantalla.blit(self._velo, (0, 0))
@@ -1706,6 +2136,22 @@ class Menus:
                 self.rect_panel_sustituciones.topleft,
             )
             self._dibujar_sustituciones(pantalla)
+        elif self.pantalla is Pantalla.ENTRENAMIENTOS:
+            self.fondo_opciones.dibujar(pantalla)
+            pantalla.blit(self._velo, (0, 0))
+            pantalla.blit(
+                self._panel_entrenamientos,
+                self.rect_panel_entrenamientos.topleft,
+            )
+            self._dibujar_entrenamientos(pantalla)
+        elif self.pantalla is Pantalla.TIENDA_ESTADIOS:
+            self.fondo_opciones.dibujar(pantalla)
+            pantalla.blit(self._velo, (0, 0))
+            pantalla.blit(
+                self._panel_tienda,
+                self.rect_panel_tienda.topleft,
+            )
+            self._dibujar_tienda(pantalla)
 
     def _dibujar_botones_imagen(
         self,
@@ -1912,6 +2358,137 @@ class Menus:
             (150, 170, 190),
         )
 
+    def _dibujar_entrenamientos(self, pantalla: pygame.Surface) -> None:
+        """Submenú de ejercicios y acceso a la tienda de estadios."""
+        self._centrar(
+            pantalla,
+            "ENTRENAMIENTOS",
+            150,
+            self.fuente_titulo,
+            BLANCO,
+        )
+        self._centrar(
+            pantalla,
+            "Gana monedas y gástalas en la tienda de estadios",
+            192,
+            self.fuente_texto,
+            self.TEXTO_SUAVE,
+        )
+        self._centrar(
+            pantalla,
+            f"MONEDAS: {self.monedas}",
+            218,
+            self.fuente_texto,
+            AMARILLO,
+        )
+        self._dibujar_botones_panel(
+            pantalla,
+            Pantalla.ENTRENAMIENTOS,
+            self.ACENTO_PRINCIPAL,
+        )
+        boton = self.boton_actual
+        descripcion = (
+            "Elige un ejercicio, juega en campo abierto o visita la tienda."
+        )
+
+        if boton is not None and boton.accion in _ENTRENAMIENTO_DE_ACCION:
+            definicion = definicion_entrenamiento(
+                _ENTRENAMIENTO_DE_ACCION[boton.accion]
+            )
+            descripcion = f"{definicion.descripcion}  ·  Premio: {definicion.recompensa} monedas + {definicion.monedas_por_gol} por gol."
+        elif boton is not None and boton.accion is Accion.CAMPO_LIBRE:
+            descripcion = (
+                "Campo abierto sin reloj ni rivales: practica tiros y pases."
+            )
+        elif boton is not None and boton.accion is Accion.TIENDA_ESTADIOS:
+            descripcion = (
+                f"Tienes {self.monedas} monedas para comprar estadios."
+            )
+
+        self._dibujar_lineas(
+            pantalla,
+            descripcion,
+            200,
+            534,
+            self.fuente_pequena,
+            self.TEXTO_SUAVE,
+            600,
+            20,
+        )
+        self._centrar(
+            pantalla,
+            "ENTER: empezar | ESC: volver",
+            596,
+            self.fuente_pequena,
+            (150, 170, 190),
+        )
+
+    def _dibujar_tienda(self, pantalla: pygame.Surface) -> None:
+        """Tienda de estadios: precios, compra y equipación."""
+        self._centrar(
+            pantalla,
+            "TIENDA DE ESTADIOS",
+            150,
+            self.fuente_titulo,
+            BLANCO,
+        )
+        self._centrar(
+            pantalla,
+            "Compra recintos con las monedas de los entrenamientos",
+            192,
+            self.fuente_texto,
+            self.TEXTO_SUAVE,
+        )
+        self._centrar(
+            pantalla,
+            f"MONEDAS: {self.monedas}",
+            218,
+            self.fuente_texto,
+            AMARILLO,
+        )
+        self._dibujar_botones_panel(
+            pantalla,
+            Pantalla.TIENDA_ESTADIOS,
+            self.ACENTO_PRINCIPAL,
+        )
+        boton = self.boton_actual
+        articulo = (
+            articulo_por_id(str(boton.valor))
+            if boton is not None and isinstance(boton.valor, str)
+            else None
+        )
+
+        if articulo is not None:
+            self._dibujar_lineas(
+                pantalla,
+                articulo.descripcion,
+                185,
+                484,
+                self.fuente_pequena,
+                self.TEXTO_SUAVE,
+                630,
+                20,
+            )
+
+        if self.mensaje_tienda:
+            self._centrar(
+                pantalla,
+                self.mensaje_tienda,
+                524,
+                self.fuente_pequena,
+                ROJO_ENERGIA
+                if self.mensaje_tienda_error
+                else VERDE_ENERGIA,
+            )
+
+        self._centrar(
+            pantalla,
+            "ENTER: comprar o equipar | ESC: volver",
+            596,
+            self.fuente_pequena,
+            (150, 170, 190),
+        )
+
     def _dibujar_uniformes(self, pantalla: pygame.Surface) -> None:
         """Dibuja el panel de personalización de uniformes."""
         self._centrar(
@@ -2001,14 +2578,12 @@ class Menus:
             (150, 170, 190),
         )
 
-    def _dibujar_campo_editor(self, pantalla: pygame.Surface) -> None:
-        """Mini campo con la ubicación de los 22 jugadores.
-
-        El equipo que se edita se dibuja con los colores de su camiseta
-        y el jugador seleccionado lleva un aro y su dorsal; el rival se
-        muestra atenuado como referencia.
-        """
-        campo = self.rect_campo_editor
+    def _dibujar_mini_campo(
+        self,
+        pantalla: pygame.Surface,
+        campo: pygame.Rect,
+    ) -> None:
+        """Fondo y líneas comunes de los mini campos de los menús."""
         pygame.draw.rect(pantalla, (16, 44, 26), campo, border_radius=8)
         pygame.draw.rect(pantalla, (120, 140, 160), campo, 1, border_radius=8)
         pygame.draw.line(
@@ -2019,6 +2594,16 @@ class Menus:
             1,
         )
         pygame.draw.circle(pantalla, (120, 140, 160), campo.center, 26, 1)
+
+    def _dibujar_campo_editor(self, pantalla: pygame.Surface) -> None:
+        """Mini campo con la ubicación de los 22 jugadores.
+
+        El equipo que se edita se dibuja con los colores de su camiseta
+        y el jugador seleccionado lleva un aro y su dorsal; el rival se
+        muestra atenuado como referencia.
+        """
+        campo = self.rect_campo_editor
+        self._dibujar_mini_campo(pantalla, campo)
 
         for equipo in (Equipo.LOCAL, Equipo.VISITANTE):
             activo = equipo is self._equipo_editor
@@ -2116,16 +2701,7 @@ class Menus:
     def _dibujar_campo_tactica(self, pantalla: pygame.Surface) -> None:
         """Mini campo con los 11 locales en la formación elegida."""
         campo = self.rect_campo_tactica
-        pygame.draw.rect(pantalla, (16, 44, 26), campo, border_radius=8)
-        pygame.draw.rect(pantalla, (120, 140, 160), campo, 1, border_radius=8)
-        pygame.draw.line(
-            pantalla,
-            (120, 140, 160),
-            campo.midleft,
-            campo.midright,
-            1,
-        )
-        pygame.draw.circle(pantalla, (120, 140, 160), campo.center, 26, 1)
+        self._dibujar_mini_campo(pantalla, campo)
 
         camiseta = self.uniformes_seleccionados[Equipo.LOCAL].camiseta
 
@@ -2281,6 +2857,250 @@ class Menus:
         pygame.draw.rect(mini, BLANCO, campo, 1)
         pygame.draw.line(mini, BLANCO, campo.midleft, campo.midright, 1)
         pygame.draw.circle(mini, BLANCO, campo.center, 22, 1)
+
+    def _imagen_de_vista(
+        self,
+        vista: Vista,
+        tamano: tuple[int, int],
+    ) -> pygame.Surface:
+        """Foto de una vista escalada al tamaño pedido, con caché."""
+        clave = (vista.archivo, tamano[0], tamano[1])
+        imagen = self._cache_estadios.get(clave)
+
+        if imagen is None:
+            imagen = cubrir(cargar_vista(vista), tamano)
+
+            if len(self._cache_estadios) >= self._MAXIMO_CACHE_ESTADIOS:
+                self._cache_estadios.pop(next(iter(self._cache_estadios)))
+
+            self._cache_estadios[clave] = imagen
+
+        return imagen
+
+    def _lineas(
+        self,
+        texto: str,
+        fuente: pygame.font.Font,
+        ancho: int,
+    ) -> list[str]:
+        """Parte un texto en líneas que caben en ``ancho`` píxeles."""
+        lineas: list[str] = []
+        actual = ""
+
+        for palabra in texto.split():
+            prueba = f"{actual} {palabra}".strip()
+
+            if actual and fuente.size(prueba)[0] > ancho:
+                lineas.append(actual)
+                actual = palabra
+            else:
+                actual = prueba
+
+        if actual:
+            lineas.append(actual)
+
+        return lineas or [""]
+
+    def _dibujar_lineas(
+        self,
+        pantalla: pygame.Surface,
+        texto: str,
+        x: int,
+        y: int,
+        fuente: pygame.font.Font,
+        color: Color,
+        ancho: int,
+        salto: int,
+    ) -> None:
+        """Dibuja un texto envuelto a partir de ``(x, y)``."""
+        for indice, linea in enumerate(self._lineas(texto, fuente, ancho)):
+            self._izquierda(
+                pantalla,
+                linea,
+                x,
+                y + indice * salto,
+                fuente,
+                color,
+            )
+
+    def _dibujar_presentacion(self, pantalla: pygame.Surface) -> None:
+        """Presenta el estadio rival antes de empezar un partido."""
+        estadio = estadio_rival(self.nivel_presentado)
+        vista = estadio.vistas[0]
+        pantalla.blit(
+            self._imagen_de_vista(vista, (ANCHO, ALTO)),
+            (0, 0),
+        )
+        pantalla.blit(self._velo, (0, 0))
+        pantalla.blit(
+            self._panel_presentacion,
+            self.rect_panel_presentacion.topleft,
+        )
+
+        self._izquierda(
+            pantalla,
+            "PRÓXIMO PARTIDO",
+            100,
+            122,
+            self.fuente_boton,
+            self.ACENTO_PRINCIPAL,
+        )
+        self._izquierda(
+            pantalla,
+            f"NIVEL {estadio.nivel:02d} · CAMPAÑA",
+            100,
+            160,
+            self.fuente_pequena,
+            self.TEXTO_SUAVE,
+        )
+        self._dibujar_lineas(
+            pantalla,
+            estadio.club,
+            100,
+            205,
+            self.fuente_boton,
+            BLANCO,
+            480,
+            30,
+        )
+        self._dibujar_lineas(
+            pantalla,
+            estadio.nombre,
+            100,
+            265,
+            self.fuente_boton,
+            self.ACENTO_PRINCIPAL,
+            480,
+            30,
+        )
+        self._izquierda(
+            pantalla,
+            "El estadio del rival te espera.",
+            100,
+            350,
+            self.fuente_texto,
+            self.TEXTO_SUAVE,
+        )
+        self._izquierda(
+            pantalla,
+            f"Vista: {vista.etiqueta}",
+            100,
+            380,
+            self.fuente_pequena,
+            self.TEXTO_SUAVE,
+        )
+
+        escudo = cargar_escudo(estadio.nivel)
+        alto = 200
+        ancho = max(
+            1,
+            round(escudo.get_width() * alto / escudo.get_height()),
+        )
+        imagen = pygame.transform.smoothscale(escudo, (ancho, alto))
+        rect_escudo = imagen.get_rect(center=(790, 285))
+        pygame.draw.rect(
+            pantalla,
+            (220, 230, 240),
+            rect_escudo.inflate(10, 10),
+            2,
+            border_radius=6,
+        )
+        pantalla.blit(imagen, rect_escudo)
+
+        self._dibujar_botones_panel(
+            pantalla,
+            Pantalla.PRESENTACION,
+            self.ACENTO_PRINCIPAL,
+        )
+        self._dibujar_pie(pantalla, "ENTER: comenzar | ESC: volver")
+
+    def _dibujar_galeria(self, pantalla: pygame.Surface) -> None:
+        """Galería de los estadios rivales con sus distintas vistas."""
+        self.fondo_opciones.dibujar(pantalla)
+        pantalla.blit(self._velo, (0, 0))
+        pantalla.blit(
+            self._panel_galeria,
+            self.rect_panel_galeria.topleft,
+        )
+        self._centrar(
+            pantalla,
+            "GALERÍA DE ESTADIOS",
+            80,
+            self.fuente_titulo,
+            BLANCO,
+        )
+
+        estadio = self.estadio_galeria
+        vista = self.vista_galeria
+        imagen = self._imagen_de_vista(
+            vista,
+            self.rect_imagen_galeria.size,
+        )
+        pantalla.blit(imagen, self.rect_imagen_galeria.topleft)
+        pygame.draw.rect(
+            pantalla,
+            (150, 175, 200),
+            self.rect_imagen_galeria,
+            1,
+            border_radius=8,
+        )
+
+        self._izquierda(
+            pantalla,
+            f"ESTADIO {self.indice_estadio_galeria + 1}"
+            f" DE {len(ESTADIOS_RIVALES)}",
+            690,
+            120,
+            self.fuente_pequena,
+            self.ACENTO_PANEL,
+        )
+        self._dibujar_lineas(
+            pantalla,
+            estadio.club,
+            690,
+            148,
+            self.fuente_pequena,
+            BLANCO,
+            260,
+            20,
+        )
+        self._dibujar_lineas(
+            pantalla,
+            estadio.nombre,
+            690,
+            182,
+            self.fuente_texto,
+            self.ACENTO_PRINCIPAL,
+            260,
+            24,
+        )
+        self._izquierda(
+            pantalla,
+            f"Vista {self.indice_vista_galeria + 1}"
+            f" de {len(estadio.vistas)}",
+            690,
+            245,
+            self.fuente_pequena,
+            self.TEXTO_SUAVE,
+        )
+        self._izquierda(
+            pantalla,
+            vista.etiqueta,
+            690,
+            268,
+            self.fuente_boton,
+            BLANCO,
+        )
+
+        self._dibujar_botones_panel(
+            pantalla,
+            Pantalla.GALERIA,
+            self.ACENTO_PANEL,
+        )
+        self._dibujar_pie(
+            pantalla,
+            "Flechas: elegir | ←/→: cambiar vista | ESC: volver",
+        )
 
     def _dibujar_palmares(self, pantalla: pygame.Surface) -> None:
         """Panel de la campaña: posiciones, resultados y trofeos."""
@@ -2521,8 +3341,35 @@ class Menus:
             if pantalla_menu is Pantalla.SUSTITUCIONES:
                 self._marcar_seleccion_sustitucion(pantalla, boton)
 
+            if pantalla_menu is Pantalla.TIENDA_ESTADIOS:
+                self._marcar_seleccion_tienda(pantalla, boton)
+
             if boton.accion is Accion.SONIDO:
                 self._dibujar_interruptor(pantalla, boton.rect)
+
+    def _marcar_seleccion_tienda(
+        self,
+        pantalla: pygame.Surface,
+        boton: Boton,
+    ) -> None:
+        """Resalta el estadio que está equipado ahora mismo."""
+        if not isinstance(boton.valor, str):
+            return
+
+        articulo = articulo_por_id(boton.valor)
+
+        if (
+            articulo is not None
+            and boton.valor in self.estadios_comprados
+            and self._estadio == articulo.estadio
+        ):
+            pygame.draw.rect(
+                pantalla,
+                BLANCO,
+                boton.rect.inflate(8, 8),
+                1,
+                border_radius=12,
+            )
 
     def _marcar_seleccion_sustitucion(
         self,
@@ -2622,11 +3469,7 @@ class Menus:
         fuente: pygame.font.Font,
         color: Color,
     ) -> None:
-        superficie = self._texto(texto, fuente, color)
-        pantalla.blit(
-            superficie,
-            superficie.get_rect(center=(ANCHO // 2, y)),
-        )
+        self._centrar_en(pantalla, texto, ANCHO // 2, y, fuente, color)
 
     def _centrar_en(
         self,
@@ -2650,18 +3493,3 @@ class Menus:
         color: Color,
     ) -> None:
         pantalla.blit(self._texto(texto, fuente, color), (x, y))
-
-    def _texto(
-        self,
-        texto: str,
-        fuente: pygame.font.Font,
-        color: Color,
-    ) -> pygame.Surface:
-        clave = (texto, id(fuente), color)
-        superficie = self._cache_textos.get(clave)
-
-        if superficie is None:
-            superficie = fuente.render(texto, True, color)
-            self._cache_textos[clave] = superficie
-
-        return superficie
